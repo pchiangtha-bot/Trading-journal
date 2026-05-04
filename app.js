@@ -1,7 +1,71 @@
 const storageKeys = {
   trades: "fx-edge-journal.trades.v1",
-  strategies: "fx-edge-journal.strategies.v1"
+  strategies: "fx-edge-journal.strategies.v1",
+  customPairs: "fx-edge-journal.custom-pairs.v1",
+  settings: "fx-edge-journal.settings.v1"
 };
+
+const defaultPair = "XAU/USD";
+const customPairValue = "__add_custom_pair__";
+let equityPeriod = "day";
+let equityChartState = { points: [] };
+let barChartStates = {};
+let analyticsRange = "all";
+let analyticsCustomStart = "";
+let analyticsCustomEnd = "";
+let marketChartPair = defaultPair;
+let marketChartInterval = "1D";
+const marketChartRanges = ["1D", "5D", "1M", "3M", "12M"];
+
+const contractSizeBySymbol = {
+  "XAU/USD": 100,
+  "XAG/USD": 5000,
+  "BTC/USD": 1,
+  "ETH/USD": 1
+};
+
+const defaultPairGroups = [
+  {
+    label: "Metals",
+    pairs: [
+      { symbol: "XAU/USD", label: "XAU/USD - Gold" },
+      { symbol: "XAG/USD", label: "XAG/USD - Silver" }
+    ]
+  },
+  {
+    label: "Major FX",
+    pairs: [
+      { symbol: "EUR/USD", label: "EUR/USD" },
+      { symbol: "GBP/USD", label: "GBP/USD" },
+      { symbol: "USD/JPY", label: "USD/JPY" },
+      { symbol: "AUD/USD", label: "AUD/USD" },
+      { symbol: "USD/CAD", label: "USD/CAD" },
+      { symbol: "USD/CHF", label: "USD/CHF" },
+      { symbol: "NZD/USD", label: "NZD/USD" }
+    ]
+  },
+  {
+    label: "Cross FX",
+    pairs: [
+      { symbol: "EUR/JPY", label: "EUR/JPY" },
+      { symbol: "GBP/JPY", label: "GBP/JPY" },
+      { symbol: "AUD/JPY", label: "AUD/JPY" },
+      { symbol: "CAD/JPY", label: "CAD/JPY" },
+      { symbol: "CHF/JPY", label: "CHF/JPY" },
+      { symbol: "NZD/JPY", label: "NZD/JPY" },
+      { symbol: "EUR/GBP", label: "EUR/GBP" },
+      { symbol: "EUR/AUD", label: "EUR/AUD" },
+      { symbol: "EUR/CAD", label: "EUR/CAD" },
+      { symbol: "EUR/CHF", label: "EUR/CHF" },
+      { symbol: "GBP/AUD", label: "GBP/AUD" },
+      { symbol: "GBP/CAD", label: "GBP/CAD" },
+      { symbol: "GBP/CHF", label: "GBP/CHF" },
+      { symbol: "AUD/CAD", label: "AUD/CAD" },
+      { symbol: "AUD/NZD", label: "AUD/NZD" },
+      { symbol: "NZD/CAD", label: "NZD/CAD" }
+    ]
+  }
+];
 
 const demoTrades = [
   {
@@ -158,7 +222,30 @@ const demoTrades = [
   }
 ];
 
-let trades = loadFromStorage(storageKeys.trades, []);
+const storedCustomPairs = loadFromStorage(storageKeys.customPairs, []);
+let customPairs = Array.isArray(storedCustomPairs)
+  ? storedCustomPairs.map((pair) => ({
+      symbol: normalizePair(pair.symbol),
+      contractSize: toNumber(pair.contractSize, 1)
+    })).filter((pair) => pair.symbol && pair.contractSize > 0)
+  : [];
+const settings = {
+  startingBalance: 1000,
+  commissionPerLot: 7,
+  ...loadFromStorage(storageKeys.settings, {})
+};
+analyticsRange = settings.analyticsRange || analyticsRange;
+analyticsCustomStart = settings.analyticsCustomStart || analyticsCustomStart;
+analyticsCustomEnd = settings.analyticsCustomEnd || analyticsCustomEnd;
+marketChartPair = settings.marketChartPair || marketChartPair;
+marketChartInterval = settings.marketChartInterval || marketChartInterval;
+if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
+
+const storedTrades = loadFromStorage(storageKeys.trades, []);
+if (Array.isArray(storedTrades)) {
+  storedTrades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
+}
+let trades = Array.isArray(storedTrades) ? storedTrades.map(withCalculatedTrade) : [];
 let strategies = loadFromStorage(storageKeys.strategies, []);
 
 const $ = (selector) => document.querySelector(selector);
@@ -167,11 +254,15 @@ const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
-  maximumFractionDigits: 0
+  maximumFractionDigits: 2
 });
 
 const numberFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2
+});
+
+const rateFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 6
 });
 
 function loadFromStorage(key, fallback) {
@@ -189,6 +280,14 @@ function saveTrades() {
 
 function saveStrategies() {
   localStorage.setItem(storageKeys.strategies, JSON.stringify(strategies));
+}
+
+function saveCustomPairs() {
+  localStorage.setItem(storageKeys.customPairs, JSON.stringify(customPairs));
+}
+
+function saveSettings() {
+  localStorage.setItem(storageKeys.settings, JSON.stringify(settings));
 }
 
 function toNumber(value, fallback = 0) {
@@ -212,28 +311,613 @@ function formatDate(value) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function localDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function startOfWeek(date) {
+  const next = new Date(date);
+  const day = next.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  next.setDate(next.getDate() + diff);
+  return next;
+}
+
+function analyticsRangeBounds(range = analyticsRange) {
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  if (range === "today") return { start: todayKey, end: todayKey };
+  if (range === "thisWeek") return { start: localDateKey(startOfWeek(today)), end: todayKey };
+  if (range === "thisMonth") return { start: `${todayKey.slice(0, 7)}-01`, end: todayKey };
+  if (range === "last7") return { start: localDateKey(addDays(today, -6)), end: todayKey };
+  if (range === "last30") return { start: localDateKey(addDays(today, -29)), end: todayKey };
+  if (range === "last90") return { start: localDateKey(addDays(today, -89)), end: todayKey };
+  if (range === "ytd") return { start: `${today.getFullYear()}-01-01`, end: todayKey };
+  if (range === "custom") return { start: analyticsCustomStart, end: analyticsCustomEnd };
+  return { start: "", end: "" };
+}
+
+function analyticsRangeName(range = analyticsRange) {
+  const names = {
+    all: "All trades",
+    today: "Today",
+    thisWeek: "This week",
+    thisMonth: "This month",
+    last7: "Last 7 days",
+    last30: "Last 30 days",
+    last90: "Last 90 days",
+    ytd: "Year to date",
+    custom: "Custom dates"
+  };
+  return names[range] || names.all;
+}
+
+function getAnalyticsTrades() {
+  const { start, end } = analyticsRangeBounds();
+  return trades.filter((trade) => {
+    const date = String(trade.date || "").slice(0, 10);
+    if (!date) return false;
+    if (start && date < start) return false;
+    if (end && date > end) return false;
+    return true;
+  });
+}
+
+function updateAnalyticsScope(list) {
+  const scope = $("#analyticsScope");
+  if (!scope) return;
+  const { start, end } = analyticsRangeBounds();
+  const dateText = start || end ? `${start || "Start"} to ${end || "Latest"}` : "Full history";
+  const net = sum(list, tradePl);
+  scope.textContent = `${analyticsRangeName()} | ${dateText} | ${list.length} orders | ${currencyFormatter.format(net)}`;
+}
+
+function updateAnalyticsFilterControls() {
+  const select = $("#analyticsRangeSelect");
+  if (!select) return;
+  select.value = analyticsRange;
+  $("#analyticsStartDate").value = analyticsCustomStart;
+  $("#analyticsEndDate").value = analyticsCustomEnd;
+  $$(".custom-date-control").forEach((control) => {
+    control.classList.toggle("hidden", analyticsRange !== "custom");
+  });
+}
+
+function saveAnalyticsRange() {
+  settings.analyticsRange = analyticsRange;
+  settings.analyticsCustomStart = analyticsCustomStart;
+  settings.analyticsCustomEnd = analyticsCustomEnd;
+  saveSettings();
+}
+
+function tradingViewSymbolFromPair(pair) {
+  const normalized = normalizePair(pair || defaultPair);
+  const { base, quote } = parsePair(normalized);
+  if (!base || !quote) return "PEPPERSTONE:XAUUSD";
+
+  if (quote === "USDT") return `BINANCE:${base}USDT`;
+  return `PEPPERSTONE:${base}${quote}`;
+}
+
+function tradingViewSymbolPageUrl(symbol) {
+  const [exchange = "PEPPERSTONE", ticker = "XAUUSD"] = String(symbol || "PEPPERSTONE:XAUUSD").split(":");
+  return `https://www.tradingview.com/symbols/${encodeURIComponent(ticker)}/?exchange=${encodeURIComponent(exchange)}`;
+}
+
+function syncMarketChartOverlay(symbol) {
+  const overlay = $("#marketChartOverlay");
+  if (!overlay) return;
+  overlay.href = tradingViewSymbolPageUrl(symbol);
+  overlay.setAttribute("aria-label", `Open ${symbol} on TradingView`);
+}
+
+function saveMarketChartSettings() {
+  settings.marketChartPair = marketChartPair;
+  settings.marketChartInterval = marketChartInterval;
+  saveSettings();
+}
+
+function renderTradingViewWidget() {
+  const shell = $("#tradingViewWidgetShell");
+  if (!shell) return;
+  const symbol = tradingViewSymbolFromPair(marketChartPair);
+  shell.innerHTML = '<div class="tradingview-widget-container__widget" id="tradingViewWidget"></div><a class="market-chart-overlay" id="marketChartOverlay" target="_blank" rel="noopener noreferrer"></a>';
+  syncMarketChartOverlay(symbol);
+  const script = document.createElement("script");
+  script.type = "text/javascript";
+  script.src = "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
+  script.async = true;
+  script.text = JSON.stringify({
+    symbol,
+    width: "100%",
+    height: "100%",
+    locale: "en",
+    dateRange: marketChartInterval,
+    colorTheme: "light",
+    trendLineColor: "rgba(15, 118, 110, 1)",
+    underLineColor: "rgba(15, 118, 110, 0.2)",
+    underLineBottomColor: "rgba(15, 118, 110, 0)",
+    isTransparent: true,
+    autosize: true,
+    largeChartUrl: tradingViewSymbolPageUrl(symbol),
+    chartOnly: false,
+    noTimeScale: false
+  });
+  shell.appendChild(script);
+}
+
+function syncMarketChartControls() {
+  renderMarketChartOptions(marketChartPair);
+  const pairSelect = $("#marketChartPairSelect");
+  const intervalSelect = $("#marketChartInterval");
+  if (pairSelect) pairSelect.value = normalizePair(marketChartPair);
+  if (intervalSelect) intervalSelect.value = marketChartInterval;
+}
+
 function getOutcome(resultR) {
   if (resultR > 0.001) return "win";
   if (resultR < -0.001) return "loss";
   return "be";
 }
 
-function calculateResultR(direction, entry, stop, exit, manualR) {
-  if (manualR !== "" && Number.isFinite(Number(manualR))) {
-    return Number(manualR);
+function parseOptionalNumber(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function roundNumber(value, decimals = 2) {
+  if (!Number.isFinite(value)) return 0;
+  return Number(value.toFixed(decimals));
+}
+
+function parsePair(pair) {
+  const normalized = String(pair || "")
+    .trim()
+    .toUpperCase()
+    .replace("-", "/");
+
+  if (normalized.includes("/")) {
+    const [base, quote] = normalized.split("/");
+    return { base: base || "", quote: quote || "" };
   }
 
-  const entryPrice = Number(entry);
-  const stopPrice = Number(stop);
-  const exitPrice = Number(exit);
+  if (normalized.length === 6) {
+    return { base: normalized.slice(0, 3), quote: normalized.slice(3) };
+  }
 
-  if (![entryPrice, stopPrice, exitPrice].every(Number.isFinite)) return 0;
+  return { base: normalized, quote: "" };
+}
 
-  const riskDistance = Math.abs(entryPrice - stopPrice);
-  if (!riskDistance) return 0;
+function normalizePair(pair) {
+  const { base, quote } = parsePair(pair);
+  return quote ? `${base}/${quote}` : base;
+}
 
-  const signedMove = direction === "Buy" ? exitPrice - entryPrice : entryPrice - exitPrice;
-  return signedMove / riskDistance;
+function defaultPairOption(symbol) {
+  const normalized = normalizePair(symbol);
+  return defaultPairGroups
+    .flatMap((group) => group.pairs)
+    .find((pair) => pair.symbol === normalized);
+}
+
+function customPairOption(symbol) {
+  const normalized = normalizePair(symbol);
+  return customPairs.find((pair) => pair.symbol === normalized);
+}
+
+function isCustomPair(symbol) {
+  return Boolean(customPairOption(symbol));
+}
+
+function defaultContractSize(pair) {
+  const normalized = normalizePair(pair);
+  const custom = customPairOption(normalized);
+  if (custom) return custom.contractSize;
+  if (contractSizeBySymbol[normalized]) return contractSizeBySymbol[normalized];
+  const { base } = parsePair(pair);
+  if (base === "BTC" || base === "ETH") return 1;
+  return 100000;
+}
+
+function defaultPipSize(pair) {
+  const { base, quote } = parsePair(pair);
+  if (quote === "JPY") return 0.01;
+  if (base === "XAU" || base === "XAG") return 0.01;
+  if (base === "BTC" || base === "ETH") return 1;
+  return 0.0001;
+}
+
+function priceInputTemplate(pair) {
+  const { base, quote } = parsePair(pair);
+  if (base === "XAU") {
+    return { step: "0.01", entry: "2365.00", stop: "2355.00", target: "2385.00", exit: "2378.00" };
+  }
+  if (base === "XAG") {
+    return { step: "0.001", entry: "28.450", stop: "28.150", target: "29.050", exit: "28.850" };
+  }
+  if (quote === "JPY") {
+    return { step: "0.001", entry: "151.280", stop: "150.900", target: "152.040", exit: "151.950" };
+  }
+  if (base === "BTC" || base === "ETH") {
+    return { step: "0.01", entry: "65000.00", stop: "64200.00", target: "66800.00", exit: "66100.00" };
+  }
+  return { step: "0.00001", entry: "1.08450", stop: "1.08150", target: "1.09100", exit: "1.08900" };
+}
+
+function updatePriceInputTemplate(pair) {
+  const form = $("#tradeForm");
+  if (!form) return;
+  const template = priceInputTemplate(pair);
+  ["entry", "stop", "target", "exit"].forEach((name) => {
+    form.elements[name].step = template.step;
+    form.elements[name].placeholder = template[name];
+  });
+}
+
+function renderPairOptions(selectedPair = defaultPair) {
+  const select = $("#pairSelect");
+  if (!select) return;
+  const selected = normalizePair(selectedPair || defaultPair);
+  select.innerHTML = "";
+
+  defaultPairGroups.forEach((group) => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = group.label;
+    group.pairs.forEach((pair) => {
+      const option = document.createElement("option");
+      option.value = pair.symbol;
+      option.textContent = pair.label;
+      optgroup.appendChild(option);
+    });
+    select.appendChild(optgroup);
+  });
+
+  if (customPairs.length) {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = "Custom";
+    customPairs
+      .slice()
+      .sort((a, b) => a.symbol.localeCompare(b.symbol))
+      .forEach((pair) => {
+        const option = document.createElement("option");
+        option.value = pair.symbol;
+        option.textContent = `${pair.symbol} - ${numberFormatter.format(pair.contractSize)} contract`;
+        optgroup.appendChild(option);
+      });
+    select.appendChild(optgroup);
+  }
+
+  const customOption = document.createElement("option");
+  customOption.value = customPairValue;
+  customOption.textContent = "Add custom pair...";
+  select.appendChild(customOption);
+
+  select.value = [...select.options].some((option) => option.value === selected) ? selected : defaultPair;
+}
+
+function appendPairOptions(select, includeAddOption = false) {
+  if (!select) return;
+  select.innerHTML = "";
+  defaultPairGroups.forEach((group) => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = group.label;
+    group.pairs.forEach((pair) => {
+      const option = document.createElement("option");
+      option.value = pair.symbol;
+      option.textContent = pair.label;
+      optgroup.appendChild(option);
+    });
+    select.appendChild(optgroup);
+  });
+
+  if (customPairs.length) {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = "Custom";
+    customPairs
+      .slice()
+      .sort((a, b) => a.symbol.localeCompare(b.symbol))
+      .forEach((pair) => {
+        const option = document.createElement("option");
+        option.value = pair.symbol;
+        option.textContent = `${pair.symbol} - ${numberFormatter.format(pair.contractSize)} contract`;
+        optgroup.appendChild(option);
+      });
+    select.appendChild(optgroup);
+  }
+
+  if (includeAddOption) {
+    const customOption = document.createElement("option");
+    customOption.value = customPairValue;
+    customOption.textContent = "Add custom pair...";
+    select.appendChild(customOption);
+  }
+}
+
+function renderMarketChartOptions(selectedPair = marketChartPair) {
+  const select = $("#marketChartPairSelect");
+  if (!select) return;
+  const selected = normalizePair(selectedPair || defaultPair);
+  appendPairOptions(select);
+  select.value = [...select.options].some((option) => option.value === selected) ? selected : defaultPair;
+}
+
+function showCustomPairRow(visible) {
+  const row = $("#customPairRow");
+  if (!row) return;
+  row.classList.toggle("hidden", !visible);
+}
+
+function syncPairTicket(pair) {
+  const form = $("#tradeForm");
+  if (!form) return;
+  if (pair === customPairValue) {
+    showCustomPairRow(true);
+    form.elements.contractSize.readOnly = false;
+    form.elements.contractSize.value = "";
+    updateTradePreview();
+    return;
+  }
+
+  const normalizedPair = normalizePair(pair || defaultPair);
+  showCustomPairRow(false);
+  updatePriceInputTemplate(normalizedPair);
+  form.elements.contractSize.value = defaultContractSize(normalizedPair);
+  form.elements.contractSize.readOnly = !isCustomPair(normalizedPair);
+  updateTradePreview();
+}
+
+function addCustomPairFromForm() {
+  const form = $("#tradeForm");
+  const symbol = normalizePair(form.elements.customPair.value);
+  const contractSize = parseOptionalNumber(form.elements.customContractSize.value);
+
+  if (!symbol || symbol === customPairValue || !symbol.includes("/")) {
+    showToast("Enter a pair like BTC/USD or ETH/USDT.");
+    return;
+  }
+
+  if (!contractSize || contractSize <= 0) {
+    showToast("Enter the contract size for one lot.");
+    return;
+  }
+
+  if (defaultPairOption(symbol)) {
+    showToast("That pair is already in the default list.");
+    renderPairOptions(symbol);
+    form.elements.pair.value = symbol;
+    syncPairTicket(symbol);
+    return;
+  }
+
+  const existing = customPairOption(symbol);
+  if (existing) existing.contractSize = contractSize;
+  else customPairs.push({ symbol, contractSize });
+
+  saveCustomPairs();
+  renderPairOptions(symbol);
+  renderMarketChartOptions(marketChartPair);
+  form.elements.pair.value = symbol;
+  form.elements.customPair.value = "";
+  form.elements.customContractSize.value = "";
+  syncPairTicket(symbol);
+  showToast(`${symbol} added.`);
+}
+
+function ensurePairAvailable(symbol, contractSize) {
+  const normalized = normalizePair(symbol);
+  if (!normalized || defaultPairOption(normalized)) return;
+  const existing = customPairOption(normalized);
+  const parsedContract = parseOptionalNumber(contractSize);
+  if (existing) {
+    if (parsedContract && parsedContract > 0) {
+      existing.contractSize = parsedContract;
+      saveCustomPairs();
+    }
+    return;
+  }
+  customPairs.push({
+    symbol: normalized,
+    contractSize: parsedContract || defaultContractSize(normalized)
+  });
+  saveCustomPairs();
+}
+
+function saveSelectedCustomContract() {
+  const form = $("#tradeForm");
+  const symbol = normalizePair(form.elements.pair.value);
+  const custom = customPairOption(symbol);
+  if (!custom) return;
+  const contractSize = parseOptionalNumber(form.elements.contractSize.value);
+  if (!contractSize || contractSize <= 0) return;
+  custom.contractSize = contractSize;
+  saveCustomPairs();
+  renderPairOptions(symbol);
+  renderMarketChartOptions(marketChartPair);
+  form.elements.pair.value = symbol;
+}
+
+function defaultCommissionAmount(lotSize, commissionPerLot) {
+  const lots = Math.max(parseOptionalNumber(lotSize) ?? 0, 0);
+  const rate = Math.max(parseOptionalNumber(commissionPerLot) ?? settings.commissionPerLot, 0);
+  const amount = roundNumber(-(lots * rate), 2);
+  return Object.is(amount, -0) ? 0 : amount;
+}
+
+function syncCommissionDefault(force = false) {
+  const form = $("#tradeForm");
+  if (!form) return;
+  const commissionInput = form.elements.commission;
+  const shouldAutoFill = force || commissionInput.dataset.manual !== "true" || commissionInput.value === "";
+  if (!shouldAutoFill) return;
+  commissionInput.value = defaultCommissionAmount(form.elements.lotSize.value, form.elements.commissionPerLot.value).toFixed(2);
+  commissionInput.dataset.manual = "";
+}
+
+function autoQuoteToUsdRate(pair, referencePrice) {
+  const { base, quote } = parsePair(pair);
+  if (!quote || quote === "USD") return 1;
+  if (base === "USD" && referencePrice > 0) return 1 / referencePrice;
+  if (quote === "JPY") return 0.0067;
+  return 1;
+}
+
+function signedMove(direction, entry, price) {
+  if (!Number.isFinite(entry) || !Number.isFinite(price)) return 0;
+  return direction === "Buy" ? price - entry : entry - price;
+}
+
+function calculateTradeNumbers(values) {
+  const pair = values.pair || "";
+  const direction = values.direction || "Buy";
+  const entry = parseOptionalNumber(values.entry);
+  const stop = parseOptionalNumber(values.stop);
+  const target = parseOptionalNumber(values.target);
+  const exit = parseOptionalNumber(values.exit);
+  const manualR = parseOptionalNumber(values.manualR);
+  const lotSize = parseOptionalNumber(values.lotSize) ?? 0;
+  const contractSize = parseOptionalNumber(values.contractSize) ?? defaultContractSize(pair);
+  const referencePrice = exit ?? target ?? entry ?? 0;
+  const quoteToAccountInput = parseOptionalNumber(values.quoteToAccount);
+  const quoteToAccountRate = quoteToAccountInput ?? autoQuoteToUsdRate(pair, referencePrice);
+  const pipSize = defaultPipSize(pair);
+  const riskDistance = entry !== null && stop !== null ? Math.abs(entry - stop) : 0;
+  const exitMove = entry !== null && exit !== null ? signedMove(direction, entry, exit) : 0;
+  const targetMove = entry !== null && target !== null ? signedMove(direction, entry, target) : 0;
+  const riskAmount = riskDistance * contractSize * lotSize * quoteToAccountRate;
+  const actualPl = exitMove * contractSize * lotSize * quoteToAccountRate;
+  const targetPl = targetMove * contractSize * lotSize * quoteToAccountRate;
+  const actualR = riskDistance ? exitMove / riskDistance : 0;
+  const targetR = riskDistance ? targetMove / riskDistance : 0;
+  const resultR = manualR ?? actualR;
+
+  return {
+    lotSize,
+    contractSize,
+    quoteToAccount: quoteToAccountInput,
+    quoteToAccountRate,
+    pipSize,
+    riskAmount,
+    actualPl,
+    targetPl,
+    actualR,
+    targetR,
+    resultR,
+    stopPips: pipSize ? riskDistance / pipSize : 0,
+    actualPips: pipSize ? exitMove / pipSize : 0,
+    targetPips: pipSize ? targetMove / pipSize : 0
+  };
+}
+
+function tradePl(trade) {
+  return tradePricePl(trade) + tradeFees(trade);
+}
+
+function tradePricePl(trade) {
+  if (Number.isFinite(Number(trade.actualPl))) return toNumber(trade.actualPl);
+  return toNumber(trade.risk) * toNumber(trade.resultR);
+}
+
+function tradeRiskAmount(trade) {
+  if (Number.isFinite(Number(trade.riskAmount))) return toNumber(trade.riskAmount);
+  return toNumber(trade.risk);
+}
+
+function tradeFees(trade) {
+  return toNumber(trade.commission) + toNumber(trade.swap);
+}
+
+function periodKey(dateValue, period) {
+  const value = String(dateValue || "").slice(0, 10);
+  if (!value) return "";
+  if (period === "year") return value.slice(0, 4);
+  if (period === "month") return value.slice(0, 7);
+  return value;
+}
+
+function periodLabel(key, period) {
+  if (!key) return "";
+  if (period === "year") return key;
+  if (period === "month") {
+    const date = new Date(`${key}-01T00:00:00`);
+    return date.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  }
+  return formatDate(key);
+}
+
+function equitySeriesForPeriod(list, period) {
+  const buckets = new Map();
+  [...list]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach((trade) => {
+      const key = periodKey(trade.date, period);
+      if (!key) return;
+      const existing = buckets.get(key) || { key, periodR: 0, count: 0 };
+      existing.periodR += toNumber(trade.resultR);
+      existing.count += 1;
+      buckets.set(key, existing);
+    });
+
+  let running = 0;
+  return [...buckets.values()]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((bucket) => {
+      running += bucket.periodR;
+      return {
+        ...bucket,
+        label: periodLabel(bucket.key, period),
+        value: running
+      };
+    });
+}
+
+function withCalculatedTrade(trade) {
+  const contractSize = defaultContractSize(trade.pair);
+  const calc = calculateTradeNumbers({
+    pair: trade.pair,
+    direction: trade.direction,
+    entry: trade.entry,
+    stop: trade.stop,
+    target: trade.target,
+    exit: trade.exit,
+    lotSize: trade.lotSize,
+    contractSize,
+    quoteToAccount: trade.quoteToAccount,
+    manualR: trade.manualR
+  });
+  const hasEntryStop = calc.stopPips > 0;
+  const hasLot = calc.lotSize > 0 && calc.contractSize > 0;
+  const resultR = hasEntryStop ? roundNumber(calc.resultR, 2) : toNumber(trade.resultR);
+  const next = {
+    ...trade,
+    resultR,
+    actualR: roundNumber(calc.actualR, 2),
+    targetR: roundNumber(calc.targetR, 2),
+    stopPips: roundNumber(calc.stopPips, 1),
+    actualPips: roundNumber(calc.actualPips, 1),
+    targetPips: roundNumber(calc.targetPips, 1)
+  };
+
+  if (hasLot) {
+    next.lotSize = calc.lotSize;
+    next.contractSize = contractSize;
+    next.quoteToAccountRate = roundNumber(calc.quoteToAccountRate, 6);
+    next.risk = roundNumber(calc.riskAmount, 2);
+    next.riskAmount = roundNumber(calc.riskAmount, 2);
+    next.actualPl = roundNumber(calc.actualPl, 2);
+    next.targetPl = roundNumber(calc.targetPl, 2);
+  }
+
+  return next;
 }
 
 function groupBy(list, keyGetter) {
@@ -249,6 +933,13 @@ function sum(list, getter) {
   return list.reduce((total, item) => total + getter(item), 0);
 }
 
+function standardDeviation(values) {
+  if (values.length < 2) return 0;
+  const average = values.reduce((total, value) => total + value, 0) / values.length;
+  const variance = values.reduce((total, value) => total + (value - average) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
 function analyze(list) {
   const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
   const wins = sorted.filter((trade) => trade.resultR > 0);
@@ -256,7 +947,7 @@ function analyze(list) {
   const grossProfit = sum(wins, (trade) => trade.resultR);
   const grossLoss = Math.abs(sum(losses, (trade) => trade.resultR));
   const netR = sum(sorted, (trade) => trade.resultR);
-  const netPl = sum(sorted, (trade) => toNumber(trade.risk) * trade.resultR);
+  const netPl = sum(sorted, tradePl);
   const avgWin = wins.length ? grossProfit / wins.length : 0;
   const avgLoss = losses.length ? grossLoss / losses.length : 0;
   const resolvedTrades = wins.length + losses.length;
@@ -332,6 +1023,136 @@ function aggregateBy(list, key) {
     .sort((a, b) => b.avgR - a.avgR || b.count - a.count);
 }
 
+function aggregateCashBy(list, key) {
+  const getter = typeof key === "function" ? key : (item) => item[key];
+  return Object.entries(groupBy(list, getter))
+    .map(([name, items]) => {
+      const values = items.map(tradePl);
+      const wins = values.filter((value) => value > 0);
+      const losses = values.filter((value) => value < 0);
+      const grossProfit = sum(wins, (value) => value);
+      const grossLoss = Math.abs(sum(losses, (value) => value));
+      const netPl = sum(values, (value) => value);
+      const resolved = wins.length + losses.length;
+      return {
+        name,
+        count: items.length,
+        netPl,
+        grossProfit,
+        grossLoss,
+        fees: sum(items, tradeFees),
+        profitFactor: grossLoss ? grossProfit / grossLoss : grossProfit ? Infinity : 0,
+        winRate: resolved ? (wins.length / resolved) * 100 : 0,
+        avgPl: items.length ? netPl / items.length : 0,
+        items
+      };
+    })
+    .sort((a, b) => b.netPl - a.netPl || b.count - a.count);
+}
+
+function consecutiveCashStats(list) {
+  let currentWins = 0;
+  let currentLosses = 0;
+  let currentProfit = 0;
+  let currentLoss = 0;
+  const stats = {
+    maxWins: 0,
+    maxLosses: 0,
+    maxConsecutiveProfit: 0,
+    maxConsecutiveLoss: 0
+  };
+
+  list.forEach((trade) => {
+    const value = tradePl(trade);
+    if (value > 0) {
+      currentWins += 1;
+      currentLosses = 0;
+      currentProfit += value;
+      currentLoss = 0;
+    } else if (value < 0) {
+      currentLosses += 1;
+      currentWins = 0;
+      currentLoss += value;
+      currentProfit = 0;
+    } else {
+      currentWins = 0;
+      currentLosses = 0;
+      currentProfit = 0;
+      currentLoss = 0;
+    }
+    stats.maxWins = Math.max(stats.maxWins, currentWins);
+    stats.maxLosses = Math.max(stats.maxLosses, currentLosses);
+    stats.maxConsecutiveProfit = Math.max(stats.maxConsecutiveProfit, currentProfit);
+    stats.maxConsecutiveLoss = Math.min(stats.maxConsecutiveLoss, currentLoss);
+  });
+
+  return stats;
+}
+
+function cashDrawdown(list, startingBalance) {
+  let balance = startingBalance;
+  let peak = startingBalance;
+  let maxDrawdown = 0;
+  list.forEach((trade) => {
+    balance += tradePl(trade);
+    peak = Math.max(peak, balance);
+    maxDrawdown = Math.min(maxDrawdown, balance - peak);
+  });
+  return maxDrawdown;
+}
+
+function tradesPerWeek(list) {
+  if (!list.length) return 0;
+  const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
+  const first = new Date(`${sorted[0].date}T00:00:00`);
+  const last = new Date(`${sorted[sorted.length - 1].date}T00:00:00`);
+  const days = Math.max((last - first) / 86400000 + 1, 1);
+  return list.length / Math.max(days / 7, 1);
+}
+
+function buildReportStats(list) {
+  const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
+  const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
+  const values = sorted.map(tradePl);
+  const priceValues = sorted.map(tradePricePl);
+  const rValues = sorted.map((trade) => toNumber(trade.resultR));
+  const grossProfitCash = sum(priceValues.filter((value) => value > 0), (value) => value);
+  const grossLossCash = Math.abs(sum(priceValues.filter((value) => value < 0), (value) => value));
+  const netPl = sum(values, (value) => value);
+  const fees = sum(sorted, tradeFees);
+  const commissions = sum(sorted, (trade) => toNumber(trade.commission));
+  const swaps = sum(sorted, (trade) => toNumber(trade.swap));
+  const balance = startingBalance + netPl;
+  const maxDrawdownCash = cashDrawdown(sorted, startingBalance);
+  const bestTrade = sorted.reduce((best, trade) => tradePl(trade) > tradePl(best || trade) ? trade : best, sorted[0] || null);
+  const worstTrade = sorted.reduce((worst, trade) => tradePl(trade) < tradePl(worst || trade) ? trade : worst, sorted[0] || null);
+  const consecutive = consecutiveCashStats(sorted);
+
+  return {
+    startingBalance,
+    balance,
+    netPl,
+    grossProfitCash,
+    grossLossCash,
+    fees,
+    commissions,
+    swaps,
+    gain: startingBalance ? (netPl / startingBalance) * 100 : 0,
+    profitFactorCash: grossLossCash ? grossProfitCash / grossLossCash : grossProfitCash ? Infinity : 0,
+    sharpeRatio: standardDeviation(rValues) ? (sum(rValues, (value) => value) / rValues.length / standardDeviation(rValues)) * Math.sqrt(rValues.length) : 0,
+    recoveryFactor: maxDrawdownCash ? netPl / Math.abs(maxDrawdownCash) : netPl > 0 ? Infinity : 0,
+    maxDrawdownCash,
+    maxDrawdownPercent: startingBalance ? (Math.abs(maxDrawdownCash) / startingBalance) * 100 : 0,
+    tradesPerWeek: tradesPerWeek(sorted),
+    averagePl: sorted.length ? netPl / sorted.length : 0,
+    bestTrade,
+    worstTrade,
+    consecutive,
+    directions: aggregateCashBy(sorted, "direction"),
+    symbols: aggregateCashBy(sorted, "pair")
+  };
+}
+
 function qualityScore(strategy) {
   const fields = ["name", "market", "trigger", "invalidation", "riskRule", "management", "reviewRule"];
   const complete = fields.filter((field) => String(strategy[field] || "").trim().length > 8).length;
@@ -348,10 +1169,11 @@ function readinessScore(stats) {
 
 function render() {
   const stats = analyze(trades);
+  const analyticsTrades = getAnalyticsTrades();
   renderSummary(stats);
   renderFilters();
   renderTable();
-  renderAnalytics(stats);
+  renderAnalytics(analyze(analyticsTrades), analyticsTrades);
   renderStrategies();
 }
 
@@ -427,8 +1249,8 @@ function renderTable() {
       <td><strong>${escapeHtml(trade.pair)}</strong><br><small>${escapeHtml(trade.session)}</small></td>
       <td>${escapeHtml(trade.direction)}</td>
       <td>${escapeHtml(trade.setup)}</td>
-      <td><span class="badge ${outcome}">${formatR(trade.resultR)}</span></td>
-      <td>${currencyFormatter.format(toNumber(trade.risk) * trade.resultR)}</td>
+      <td><span class="badge ${outcome}">${formatR(trade.resultR)}</span><br><small>Target ${formatR(toNumber(trade.targetR))}</small></td>
+      <td>${currencyFormatter.format(tradePl(trade))}</td>
       <td>${formatPercent(toNumber(trade.discipline))}</td>
       <td>
         <div class="row-actions">
@@ -445,19 +1267,25 @@ function renderTable() {
   });
 }
 
-function renderAnalytics(stats) {
-  $("#expectancyPill").textContent = `${formatR(stats.expectancy)} expectancy`;
-  drawEquityChart(stats.equity);
-  renderInsights(stats);
+function renderAnalytics(stats, sourceTrades = getAnalyticsTrades()) {
+  updateAnalyticsScope(sourceTrades);
+  const equitySeries = equitySeriesForPeriod(sourceTrades, equityPeriod);
+  const periodLabelText = equityPeriod.charAt(0).toUpperCase() + equityPeriod.slice(1);
+  $("#expectancyPill").textContent = `${periodLabelText} view, ${formatR(stats.expectancy)} expectancy`;
+  drawEquityChart(equitySeries, equityPeriod);
+  renderInsights(stats, sourceTrades);
   renderLeaderboard("#setupLeaderboard", stats.setupStats, "setup");
   renderLeaderboard("#sessionBreakdown", stats.sessionStats, "session");
   renderLeaderboard("#mistakeBreakdown", stats.mistakeStats, "mistake");
   renderBestProfile(stats);
+  renderPerformanceCharts(sourceTrades);
+  renderReportAnalysis(sourceTrades);
 }
 
-function drawEquityChart(equity) {
+function drawEquityChart(equity, period = "day") {
   const canvas = $("#equityChart");
   const context = canvas.getContext("2d");
+  hideEquityTooltip();
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const width = Math.max(rect.width, 320);
@@ -471,9 +1299,19 @@ function drawEquityChart(equity) {
   context.fillRect(0, 0, width, height);
 
   const padding = { top: 24, right: 24, bottom: 34, left: 46 };
-  const values = [0, ...equity.map((point) => point.value)];
+  const chartData = [
+    { label: "Start", value: 0, periodR: 0, count: 0, key: "" },
+    ...equity.map((point) => ({
+      ...point,
+      label: point.label || periodLabel(point.key, period)
+    }))
+  ];
+  const values = chartData.map((point) => point.value);
+  const labels = chartData.map((point) => point.label);
 
   if (values.length < 2) {
+    equityChartState = { points: [] };
+    hideEquityTooltip();
     context.fillStyle = "#69736f";
     context.font = "14px Segoe UI, sans-serif";
     context.fillText("No equity curve yet", padding.left, height / 2);
@@ -492,7 +1330,7 @@ function drawEquityChart(equity) {
   const points = values.map((value, index) => {
     const x = padding.left + (chartWidth * index) / (values.length - 1);
     const y = padding.top + chartHeight - ((value - yMin) / (yMax - yMin)) * chartHeight;
-    return { x, y, value };
+    return { ...chartData[index], x, y, value };
   });
 
   drawChartFrame(context, width, height, padding);
@@ -538,6 +1376,8 @@ function drawEquityChart(equity) {
   context.font = "12px Segoe UI, sans-serif";
   context.fillText(formatR(yMax), 10, padding.top + 4);
   context.fillText(formatR(yMin), 10, height - padding.bottom);
+  drawChartLabels(context, points, labels, height);
+  equityChartState = { points, period, width, height };
 }
 
 function drawChartFrame(context, width, height, padding) {
@@ -546,11 +1386,291 @@ function drawChartFrame(context, width, height, padding) {
   context.strokeRect(padding.left, padding.top, width - padding.left - padding.right, height - padding.top - padding.bottom);
 }
 
-function renderInsights(stats) {
+function drawChartLabels(context, points, labels, height) {
+  if (!points.length) return;
+  const indexes = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
+  context.fillStyle = "#69736f";
+  context.font = "12px Segoe UI, sans-serif";
+  indexes.forEach((index) => {
+    const point = points[index];
+    const label = labels[index] || "";
+    context.textAlign = index === 0 ? "left" : index === points.length - 1 ? "right" : "center";
+    context.fillText(label, point.x, height - 10);
+  });
+  context.textAlign = "left";
+}
+
+function cashSeriesForPeriod(list, period) {
+  const buckets = new Map();
+  [...list]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach((trade) => {
+      const key = periodKey(trade.date, period);
+      if (!key) return;
+      const existing = buckets.get(key) || { key, value: 0, count: 0 };
+      existing.value += tradePl(trade);
+      existing.count += 1;
+      buckets.set(key, existing);
+    });
+
+  return [...buckets.values()]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((bucket) => ({
+      ...bucket,
+      label: periodLabel(bucket.key, period)
+    }));
+}
+
+function rDistributionData(list) {
+  const bins = [
+    { label: "< -2R", min: -Infinity, max: -2, value: 0 },
+    { label: "-2 to -1R", min: -2, max: -1, value: 0 },
+    { label: "-1 to 0R", min: -1, max: 0, value: 0 },
+    { label: "0R", min: 0, max: 0, value: 0 },
+    { label: "0 to 1R", min: 0, max: 1, value: 0 },
+    { label: "1 to 2R", min: 1, max: 2, value: 0 },
+    { label: "> 2R", min: 2, max: Infinity, value: 0 }
+  ];
+
+  list.forEach((trade) => {
+    const value = toNumber(trade.resultR);
+    const bin = bins.find((item) => {
+      if (item.min === 0 && item.max === 0) return Math.abs(value) < 0.001;
+      return value >= item.min && value < item.max;
+    });
+    if (bin) bin.value += 1;
+  });
+
+  return bins.map(({ label, value }) => ({
+    label,
+    value,
+    count: value,
+    detail: `${numberFormatter.format(value)} orders landed in this R bucket`
+  }));
+}
+
+function renderPerformanceCharts(sourceTrades = getAnalyticsTrades()) {
+  const report = buildReportStats(sourceTrades);
+  const periodData = cashSeriesForPeriod(sourceTrades, equityPeriod).map((item) => ({
+    ...item,
+    detail: `${item.count} orders in this ${equityPeriod}`
+  }));
+  const pairData = report.symbols.slice(0, 8).map((item) => ({
+    label: item.name,
+    value: item.netPl,
+    count: item.count,
+    detail: `${item.count} orders, ${formatPercent(item.winRate)} win, PF ${formatFactor(item.profitFactor)}`
+  }));
+  const directionData = report.directions.map((item) => ({
+    label: item.name,
+    value: item.netPl,
+    count: item.count,
+    detail: `${item.count} orders, ${formatPercent(item.winRate)} win, ${currencyFormatter.format(item.avgPl)} avg`
+  }));
+
+  drawBarChart("periodPlChart", periodData, {
+    formatter: (value) => currencyFormatter.format(value),
+    empty: "No period P/L yet",
+    valueLabel: "Net P/L"
+  });
+  drawBarChart("pairPlChart", pairData, {
+    formatter: (value) => currencyFormatter.format(value),
+    empty: "No pair P/L yet",
+    valueLabel: "Net P/L"
+  });
+  drawBarChart("directionPlChart", directionData, {
+    formatter: (value) => currencyFormatter.format(value),
+    empty: "No long/short P/L yet",
+    valueLabel: "Net P/L"
+  });
+  drawBarChart("rDistributionChart", rDistributionData(sourceTrades), {
+    formatter: (value) => `${numberFormatter.format(value)} trades`,
+    colorMode: "count",
+    empty: "No R distribution yet",
+    valueLabel: "Orders"
+  });
+}
+
+function drawBarChart(canvasId, data, options = {}) {
+  const canvas = $(`#${canvasId}`);
+  if (!canvas) return;
+  hideBarChartTooltip();
+  const context = canvas.getContext("2d");
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(rect.width, 320);
+  const height = Number(canvas.getAttribute("height")) || 260;
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#fffefb";
+  context.fillRect(0, 0, width, height);
+
+  const cleanData = data.filter((item) => item && item.label);
+  if (!cleanData.length || cleanData.every((item) => toNumber(item.value) === 0)) {
+    barChartStates[canvasId] = { bars: [], options };
+    context.fillStyle = "#69736f";
+    context.font = "14px Segoe UI, sans-serif";
+    context.fillText(options.empty || "No data yet", 18, height / 2);
+    return;
+  }
+
+  const padding = { top: 24, right: 18, bottom: 54, left: 54 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const values = cleanData.map((item) => toNumber(item.value));
+  const minValue = Math.min(0, ...values);
+  const maxValue = Math.max(0, ...values);
+  const range = Math.max(maxValue - minValue, 1);
+  const baseline = padding.top + chartHeight - ((0 - minValue) / range) * chartHeight;
+  const barGap = 8;
+  const barWidth = Math.max((chartWidth - barGap * (cleanData.length - 1)) / cleanData.length, 8);
+  const bars = [];
+
+  context.strokeStyle = "#d9ded7";
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(padding.left, baseline);
+  context.lineTo(width - padding.right, baseline);
+  context.stroke();
+
+  cleanData.forEach((item, index) => {
+    const value = toNumber(item.value);
+    const x = padding.left + index * (barWidth + barGap);
+    const y = padding.top + chartHeight - ((value - minValue) / range) * chartHeight;
+    const top = Math.min(y, baseline);
+    const barHeight = Math.max(Math.abs(baseline - y), 2);
+    const isCount = options.colorMode === "count";
+    context.fillStyle = isCount ? "#2563eb" : value >= 0 ? "#0f766e" : "#be123c";
+    context.fillRect(x, top, barWidth, barHeight);
+    bars.push({
+      x,
+      y: top,
+      width: barWidth,
+      height: barHeight,
+      label: item.label,
+      value,
+      count: item.count ?? item.value ?? 0,
+      detail: item.detail || "",
+      raw: item
+    });
+
+    context.fillStyle = "#1f2826";
+    context.font = "11px Segoe UI, sans-serif";
+    context.textAlign = "center";
+    const valueText = options.formatter ? options.formatter(value) : numberFormatter.format(value);
+    context.fillText(valueText, x + barWidth / 2, Math.max(top - 6, 12));
+
+    context.fillStyle = "#69736f";
+    const label = String(item.label).length > 10 ? `${String(item.label).slice(0, 9)}...` : String(item.label);
+    context.fillText(label, x + barWidth / 2, height - 20);
+  });
+
+  context.textAlign = "left";
+  barChartStates[canvasId] = { bars, options };
+}
+
+function handleBarChartPointerMove(event) {
+  const canvas = event.currentTarget;
+  const state = barChartStates[canvas.id];
+  const tooltip = $("#barChartTooltip");
+  if (!state || !state.bars.length || !tooltip) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const bar = state.bars.find((item) => {
+    const withinX = x >= item.x - 4 && x <= item.x + item.width + 4;
+    const withinY = y >= Math.min(item.y, item.y + item.height) - 18 && y <= Math.max(item.y, item.y + item.height) + 18;
+    return withinX && withinY;
+  });
+
+  if (!bar) {
+    hideBarChartTooltip();
+    return;
+  }
+
+  const formatter = state.options.formatter || ((value) => numberFormatter.format(value));
+  const valueText = formatter(bar.value);
+  const conclusion =
+    state.options.colorMode === "count"
+      ? "Distribution bucket for reviewing outcome quality."
+      : bar.value > 0
+        ? "Positive contribution in the selected period."
+        : bar.value < 0
+          ? "Negative contribution; review entries, exits, and mistakes."
+          : "Flat contribution.";
+
+  tooltip.innerHTML = `
+    <strong>${escapeHtml(bar.label)}</strong>
+    <p>${escapeHtml(state.options.valueLabel || "Value")}: ${escapeHtml(valueText)}</p>
+    <p>${escapeHtml(bar.detail || `${numberFormatter.format(bar.count)} orders`)}</p>
+    <p>${escapeHtml(conclusion)}</p>
+  `;
+  tooltip.style.left = `${event.clientX}px`;
+  tooltip.style.top = `${event.clientY}px`;
+  tooltip.classList.add("visible");
+}
+
+function hideBarChartTooltip() {
+  const tooltip = $("#barChartTooltip");
+  if (tooltip) tooltip.classList.remove("visible");
+}
+
+function handleEquityPointerMove(event) {
+  const canvas = $("#equityChart");
+  const tooltip = $("#equityTooltip");
+  if (!canvas || !tooltip || !equityChartState.points.length) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const nearest = equityChartState.points.reduce((best, point) => {
+    const distance = Math.hypot(point.x - x, point.y - y);
+    return distance < best.distance ? { point, distance } : best;
+  }, { point: null, distance: Infinity });
+
+  if (!nearest.point || nearest.distance > 32) {
+    hideEquityTooltip();
+    return;
+  }
+
+  const point = nearest.point;
+  const periodR = toNumber(point.periodR);
+  const conclusion =
+    point.count === 0
+      ? "Starting point before recorded trades."
+      : periodR > 0
+        ? "Positive period; execution added edge."
+        : periodR < 0
+          ? "Negative period; review mistakes and setup quality."
+          : "Flat period; no net R change.";
+
+  tooltip.innerHTML = `
+    <strong>${escapeHtml(point.label)}</strong>
+    <p>${point.count || 0} trades, ${formatR(periodR)} this ${equityChartState.period}.</p>
+    <p>Cumulative ${formatR(point.value)}. ${escapeHtml(conclusion)}</p>
+  `;
+
+  const horizontalEdge = Math.min(110, rect.width / 2);
+  const tooltipX = Math.min(Math.max(point.x, horizontalEdge), rect.width - horizontalEdge);
+  const tooltipY = Math.max(point.y, 80);
+  tooltip.style.left = `${tooltipX}px`;
+  tooltip.style.top = `${tooltipY}px`;
+  tooltip.classList.add("visible");
+}
+
+function hideEquityTooltip() {
+  const tooltip = $("#equityTooltip");
+  if (tooltip) tooltip.classList.remove("visible");
+}
+
+function renderInsights(stats, sourceTrades = getAnalyticsTrades()) {
   const bestPair = stats.pairStats[0];
   const bestSession = stats.sessionStats[0];
   const worstMistake = [...stats.mistakeStats].sort((a, b) => a.netR - b.netR)[0];
-  const disciplineLeak = trades.filter((trade) => toNumber(trade.discipline) < 60);
+  const disciplineLeak = sourceTrades.filter((trade) => toNumber(trade.discipline) < 60);
   const ideas = [];
 
   ideas.push({
@@ -608,6 +1728,84 @@ function renderLeaderboard(selector, stats, type) {
       `;
     })
     .join("");
+}
+
+function formatFactor(value) {
+  if (value === Infinity) return "Perfect";
+  return numberFormatter.format(value || 0);
+}
+
+function renderMetricRows(selector, rows) {
+  const container = $(selector);
+  if (!container) return;
+  container.innerHTML = rows
+    .map((row) => `<div class="metric-row"><span>${escapeHtml(row.label)}</span><strong>${escapeHtml(row.value)}</strong></div>`)
+    .join("");
+}
+
+function renderCashLeaderboard(selector, stats, emptyLabel) {
+  const container = $(selector);
+  if (!container) return;
+  if (!stats.length) {
+    container.innerHTML = `<div class="empty-state visible">No ${emptyLabel} data.</div>`;
+    return;
+  }
+
+  const topAbs = Math.max(...stats.map((item) => Math.abs(item.netPl)), 1);
+  container.innerHTML = stats
+    .slice(0, 6)
+    .map((item) => {
+      const width = Math.min((Math.abs(item.netPl) / topAbs) * 100, 100);
+      const color = item.netPl >= 0 ? "#0f766e" : "#be123c";
+      return `
+        <article class="leader-row">
+          <div>
+            <strong>${escapeHtml(item.name)}</strong>
+            <p>${item.count} trades, ${formatPercent(item.winRate)} win, PF ${formatFactor(item.profitFactor)}</p>
+          </div>
+          <div class="leader-meta">${currencyFormatter.format(item.netPl)}</div>
+          <div class="leader-track"><div class="leader-fill" style="width: ${width}%; background: ${color};"></div></div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderReportAnalysis(sourceTrades = getAnalyticsTrades()) {
+  const report = buildReportStats(sourceTrades);
+  const input = $("#startingBalanceInput");
+  if (input && document.activeElement !== input) input.value = report.startingBalance || "";
+
+  renderMetricRows("#reportSummary", [
+    { label: "Gain", value: formatPercent(report.gain) },
+    { label: "Balance", value: currencyFormatter.format(report.balance) },
+    { label: "Profit Factor", value: formatFactor(report.profitFactorCash) },
+    { label: "Sharpe Ratio", value: numberFormatter.format(report.sharpeRatio) },
+    { label: "Recovery Factor", value: formatFactor(report.recoveryFactor) },
+    { label: "Trades / Week", value: numberFormatter.format(report.tradesPerWeek) }
+  ]);
+
+  renderMetricRows("#reportProfitLoss", [
+    { label: "Net P/L", value: currencyFormatter.format(report.netPl) },
+    { label: "Gross Profit", value: currencyFormatter.format(report.grossProfitCash) },
+    { label: "Gross Loss", value: currencyFormatter.format(-report.grossLossCash) },
+    { label: "Average P/L", value: currencyFormatter.format(report.averagePl) },
+    { label: "Commissions", value: currencyFormatter.format(report.commissions) },
+    { label: "Swaps", value: currencyFormatter.format(report.swaps) }
+  ]);
+
+  renderCashLeaderboard("#reportLongShort", report.directions, "direction");
+  renderCashLeaderboard("#reportSymbols", report.symbols, "symbol");
+
+  renderMetricRows("#reportRisks", [
+    { label: "Best Trade", value: report.bestTrade ? currencyFormatter.format(tradePl(report.bestTrade)) : currencyFormatter.format(0) },
+    { label: "Worst Trade", value: report.worstTrade ? currencyFormatter.format(tradePl(report.worstTrade)) : currencyFormatter.format(0) },
+    { label: "Max Drawdown", value: `${currencyFormatter.format(report.maxDrawdownCash)} (${formatPercent(report.maxDrawdownPercent)})` },
+    { label: "Max Consec. Wins", value: String(report.consecutive.maxWins) },
+    { label: "Max Consec. Losses", value: String(report.consecutive.maxLosses) },
+    { label: "Max Consec. Profit", value: currencyFormatter.format(report.consecutive.maxConsecutiveProfit) },
+    { label: "Max Consec. Loss", value: currencyFormatter.format(report.consecutive.maxConsecutiveLoss) }
+  ]);
 }
 
 function renderBestProfile(stats) {
@@ -680,27 +1878,48 @@ function readTradeForm() {
   const form = $("#tradeForm");
   const data = new FormData(form);
   const direction = data.get("direction");
-  const resultR = calculateResultR(
+  const calc = calculateTradeNumbers({
+    pair: data.get("pair"),
     direction,
-    data.get("entry"),
-    data.get("stop"),
-    data.get("exit"),
-    data.get("manualR")
-  );
+    entry: data.get("entry"),
+    stop: data.get("stop"),
+    target: data.get("target"),
+    exit: data.get("exit"),
+    lotSize: data.get("lotSize"),
+    contractSize: data.get("contractSize"),
+    quoteToAccount: data.get("quoteToAccount"),
+    manualR: data.get("manualR")
+  });
 
   return {
     id: data.get("id") || crypto.randomUUID(),
     date: data.get("date"),
-    pair: String(data.get("pair") || "").trim().toUpperCase(),
+    pair: normalizePair(data.get("pair")),
     session: data.get("session"),
     direction,
     setup: String(data.get("setup") || "").trim(),
-    entry: toNumber(data.get("entry")),
-    stop: toNumber(data.get("stop")),
-    target: toNumber(data.get("target")),
-    exit: toNumber(data.get("exit")),
-    risk: toNumber(data.get("risk")),
-    resultR: Number(resultR.toFixed(2)),
+    entry: parseOptionalNumber(data.get("entry")) ?? 0,
+    stop: parseOptionalNumber(data.get("stop")) ?? 0,
+    target: parseOptionalNumber(data.get("target")) ?? 0,
+    exit: parseOptionalNumber(data.get("exit")) ?? 0,
+    lotSize: calc.lotSize,
+    contractSize: calc.contractSize,
+    quoteToAccount: calc.quoteToAccount ?? "",
+    quoteToAccountRate: roundNumber(calc.quoteToAccountRate, 6),
+    manualR: parseOptionalNumber(data.get("manualR")) ?? "",
+    risk: roundNumber(calc.riskAmount, 2),
+    riskAmount: roundNumber(calc.riskAmount, 2),
+    actualPl: roundNumber(calc.actualPl, 2),
+    targetPl: roundNumber(calc.targetPl, 2),
+    resultR: roundNumber(calc.resultR, 2),
+    actualR: roundNumber(calc.actualR, 2),
+    targetR: roundNumber(calc.targetR, 2),
+    stopPips: roundNumber(calc.stopPips, 1),
+    actualPips: roundNumber(calc.actualPips, 1),
+    targetPips: roundNumber(calc.targetPips, 1),
+    commissionPerLot: parseOptionalNumber(data.get("commissionPerLot")) ?? settings.commissionPerLot,
+    commission: parseOptionalNumber(data.get("commission")) ?? 0,
+    swap: parseOptionalNumber(data.get("swap")) ?? 0,
     mistake: data.get("mistake"),
     confidence: toNumber(data.get("confidence")),
     discipline: toNumber(data.get("discipline")),
@@ -714,17 +1933,27 @@ function readTradeForm() {
 
 function fillTradeForm(trade) {
   const form = $("#tradeForm");
+  ensurePairAvailable(trade.pair, trade.contractSize);
+  renderPairOptions(trade.pair);
   form.elements.id.value = trade.id;
   form.elements.date.value = trade.date;
-  form.elements.pair.value = trade.pair;
+  form.elements.pair.value = normalizePair(trade.pair);
+  if (!form.elements.pair.value) form.elements.pair.value = defaultPair;
+  syncPairTicket(form.elements.pair.value);
   form.elements.session.value = trade.session;
   form.elements.setup.value = trade.setup;
   form.elements.entry.value = trade.entry || "";
   form.elements.stop.value = trade.stop || "";
   form.elements.target.value = trade.target || "";
   form.elements.exit.value = trade.exit || "";
-  form.elements.risk.value = trade.risk || "";
-  form.elements.manualR.value = trade.resultR;
+  form.elements.lotSize.value = trade.lotSize || "";
+  form.elements.contractSize.value = defaultContractSize(form.elements.pair.value);
+  form.elements.quoteToAccount.value = trade.quoteToAccount || "";
+  form.elements.manualR.value = trade.manualR || "";
+  form.elements.commissionPerLot.value = trade.commissionPerLot || settings.commissionPerLot;
+  form.elements.commission.dataset.manual = trade.commission === undefined ? "" : "true";
+  form.elements.commission.value = trade.commission || "";
+  form.elements.swap.value = trade.swap || "";
   form.elements.mistake.value = trade.mistake || "None";
   form.elements.confidence.value = trade.confidence || 60;
   form.elements.discipline.value = trade.discipline || 70;
@@ -732,6 +1961,7 @@ function fillTradeForm(trade) {
   form.elements.notes.value = trade.notes || "";
   setSegment("direction", trade.direction || "Buy");
   updateSliderOutputs();
+  updateTradePreview();
   $("#saveTradeBtn").innerHTML = `${iconMarkup("save")} Update Trade`;
 }
 
@@ -740,10 +1970,17 @@ function resetTradeForm() {
   form.reset();
   form.elements.id.value = "";
   form.elements.date.value = new Date().toISOString().slice(0, 10);
+  form.elements.pair.value = defaultPair;
+  syncPairTicket(defaultPair);
+  form.elements.commissionPerLot.value = settings.commissionPerLot;
+  form.elements.commission.dataset.manual = "";
+  form.elements.swap.value = 0;
+  syncCommissionDefault(true);
   form.elements.confidence.value = 60;
   form.elements.discipline.value = 70;
   setSegment("direction", "Buy");
   updateSliderOutputs();
+  updateTradePreview();
   $("#saveTradeBtn").innerHTML = `${iconMarkup("save")} Save Trade`;
 }
 
@@ -783,11 +2020,46 @@ function setSegment(field, value) {
   });
   const input = document.querySelector(`input[name="${field}"]`);
   if (input) input.value = value;
+  if (field === "direction") updateTradePreview();
 }
 
 function updateSliderOutputs() {
   $("#confidenceOut").textContent = $("#tradeForm").elements.confidence.value;
   $("#disciplineOut").textContent = $("#tradeForm").elements.discipline.value;
+}
+
+function updateTradePreview() {
+  const form = $("#tradeForm");
+  if (!form) return;
+  syncCommissionDefault();
+
+  const calc = calculateTradeNumbers({
+    pair: form.elements.pair.value,
+    direction: form.elements.direction.value,
+    entry: form.elements.entry.value,
+    stop: form.elements.stop.value,
+    target: form.elements.target.value,
+    exit: form.elements.exit.value,
+    lotSize: form.elements.lotSize.value,
+    contractSize: form.elements.contractSize.value,
+    quoteToAccount: form.elements.quoteToAccount.value,
+    manualR: form.elements.manualR.value
+  });
+
+  $("#previewActualR").textContent = formatR(calc.actualR);
+  $("#previewTargetR").textContent = formatR(calc.targetR);
+  $("#previewRisk").textContent = currencyFormatter.format(calc.riskAmount);
+  $("#previewTargetPl").textContent = currencyFormatter.format(calc.targetPl);
+  const fees = toNumber(form.elements.commission.value) + toNumber(form.elements.swap.value);
+  $("#previewActualPl").textContent = currencyFormatter.format(calc.actualPl + fees);
+  $("#previewPips").textContent = `${numberFormatter.format(calc.actualPips)} / ${numberFormatter.format(calc.targetPips)}`;
+
+  const { base, quote } = parsePair(form.elements.pair.value);
+  const quoteText = quote ? `${quote}->USD ${rateFormatter.format(calc.quoteToAccountRate)}` : "Quote->USD 1";
+  const pairText = base && quote ? `${base}/${quote}` : "pair";
+  $("#previewFormula").textContent =
+    `${pairText}: ${numberFormatter.format(calc.lotSize)} lot x ${numberFormatter.format(calc.contractSize)} contract, ` +
+    `${quoteText}. Stop ${numberFormatter.format(calc.stopPips)} pips, target ${numberFormatter.format(calc.targetPips)} pips, fees ${currencyFormatter.format(fees)}.`;
 }
 
 function downloadFile(filename, content, type) {
@@ -811,8 +2083,24 @@ function exportCsv() {
     "stop",
     "target",
     "exit",
+    "lotSize",
+    "contractSize",
+    "quoteToAccount",
+    "quoteToAccountRate",
     "risk",
+    "riskAmount",
+    "actualPl",
+    "targetPl",
     "resultR",
+    "actualR",
+    "targetR",
+    "stopPips",
+    "actualPips",
+    "targetPips",
+    "manualR",
+    "commissionPerLot",
+    "commission",
+    "swap",
     "mistake",
     "confidence",
     "discipline",
@@ -836,15 +2124,27 @@ function importJson(file) {
     try {
       const parsed = JSON.parse(reader.result);
       if (!Array.isArray(parsed.trades)) throw new Error("Invalid import file");
-      trades = parsed.trades.map((trade) => ({
-        ...trade,
-        id: trade.id || crypto.randomUUID(),
-        resultR: toNumber(trade.resultR),
-        risk: toNumber(trade.risk)
-      }));
+      if (Array.isArray(parsed.customPairs)) {
+        parsed.customPairs.forEach((pair) => ensurePairAvailable(pair.symbol, pair.contractSize));
+      }
+      if (parsed.settings && typeof parsed.settings === "object") {
+        Object.assign(settings, parsed.settings);
+        saveSettings();
+      }
+      parsed.trades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
+      trades = parsed.trades.map((trade) =>
+        withCalculatedTrade({
+          ...trade,
+          id: trade.id || crypto.randomUUID(),
+          resultR: toNumber(trade.resultR),
+          risk: toNumber(trade.risk)
+        })
+      );
       strategies = Array.isArray(parsed.strategies) ? parsed.strategies : strategies;
       saveTrades();
       saveStrategies();
+      renderPairOptions(defaultPair);
+      renderMarketChartOptions(marketChartPair);
       render();
       showToast("Import complete.");
     } catch (error) {
@@ -896,12 +2196,69 @@ function bindEvents() {
     root.addEventListener("click", (event) => {
       const button = event.target.closest(".segment");
       if (!button) return;
+      if (button.dataset.period) return;
       setSegment(root.dataset.field, button.dataset.value);
     });
   });
 
+  $$(".chart-period .segment").forEach((button) => {
+    button.addEventListener("click", () => {
+      equityPeriod = button.dataset.period || "day";
+      $$(".chart-period .segment").forEach((segment) => segment.classList.remove("active"));
+      button.classList.add("active");
+      const analyticsTrades = getAnalyticsTrades();
+      renderAnalytics(analyze(analyticsTrades), analyticsTrades);
+    });
+  });
+
+  $("#equityChart").addEventListener("pointermove", handleEquityPointerMove);
+  $("#equityChart").addEventListener("pointerleave", hideEquityTooltip);
+  ["periodPlChart", "pairPlChart", "directionPlChart", "rDistributionChart"].forEach((id) => {
+    const canvas = $(`#${id}`);
+    if (!canvas) return;
+    canvas.addEventListener("pointermove", handleBarChartPointerMove);
+    canvas.addEventListener("pointerleave", hideBarChartTooltip);
+  });
+
+  updateAnalyticsFilterControls();
+  $("#analyticsRangeSelect").addEventListener("change", (event) => {
+    analyticsRange = event.target.value || "all";
+    saveAnalyticsRange();
+    updateAnalyticsFilterControls();
+    render();
+  });
+  $("#analyticsStartDate").addEventListener("input", (event) => {
+    analyticsCustomStart = event.target.value;
+    saveAnalyticsRange();
+    render();
+  });
+  $("#analyticsEndDate").addEventListener("input", (event) => {
+    analyticsCustomEnd = event.target.value;
+    saveAnalyticsRange();
+    render();
+  });
+
+  syncMarketChartControls();
+  $("#marketChartPairSelect").addEventListener("change", (event) => {
+    marketChartPair = normalizePair(event.target.value || defaultPair);
+    saveMarketChartSettings();
+    renderTradingViewWidget();
+  });
+  $("#marketChartInterval").addEventListener("change", (event) => {
+    marketChartInterval = event.target.value || "1D";
+    if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
+    saveMarketChartSettings();
+    renderTradingViewWidget();
+  });
+  const reloadButton = $("#reloadMarketChartBtn");
+  if (reloadButton) reloadButton.addEventListener("click", renderTradingViewWidget);
+
   $("#tradeForm").addEventListener("submit", (event) => {
     event.preventDefault();
+    if ($("#tradeForm").elements.pair.value === customPairValue) {
+      showToast("Add the custom pair before saving the trade.");
+      return;
+    }
     const trade = readTradeForm();
     const index = trades.findIndex((item) => item.id === trade.id);
     if (index >= 0) trades[index] = trade;
@@ -965,6 +2322,42 @@ function bindEvents() {
     $(`#${id}`).addEventListener("input", renderTable);
   });
 
+  const form = $("#tradeForm");
+  ["pair", "entry", "stop", "target", "exit", "lotSize", "quoteToAccount", "manualR", "commissionPerLot", "commission", "swap"].forEach((name) => {
+    const handler = () => {
+      if (name === "pair") {
+        syncPairTicket(form.elements.pair.value);
+        return;
+      }
+      if (name === "commission") {
+        form.elements.commission.dataset.manual = "true";
+      }
+      if (name === "commissionPerLot") {
+        settings.commissionPerLot = Math.max(toNumber(form.elements.commissionPerLot.value, 0), 0);
+        saveSettings();
+      }
+      updateTradePreview();
+    };
+    form.elements[name].addEventListener("input", handler);
+    form.elements[name].addEventListener("change", handler);
+  });
+
+  form.elements.contractSize.addEventListener("input", () => {
+    saveSelectedCustomContract();
+    updateTradePreview();
+  });
+  form.elements.contractSize.addEventListener("change", () => {
+    saveSelectedCustomContract();
+    updateTradePreview();
+  });
+  $("#addPairBtn").addEventListener("click", addCustomPairFromForm);
+
+  $("#startingBalanceInput").addEventListener("input", (event) => {
+    settings.startingBalance = toNumber(event.target.value, 0);
+    saveSettings();
+    renderReportAnalysis(getAnalyticsTrades());
+  });
+
   $("#tradeForm").elements.confidence.addEventListener("input", updateSliderOutputs);
   $("#tradeForm").elements.discipline.addEventListener("input", updateSliderOutputs);
   $("#resetTradeBtn").addEventListener("click", resetTradeForm);
@@ -985,7 +2378,13 @@ function bindEvents() {
     const existingIds = new Set(trades.map((trade) => trade.id));
     const freshDemoTrades = demoTrades
       .filter((trade) => !existingIds.has(trade.id))
-      .map((trade) => ({ ...trade }));
+      .map((trade) =>
+        withCalculatedTrade({
+          ...trade,
+          lotSize: trade.lotSize || 0.1,
+          contractSize: trade.contractSize || defaultContractSize(trade.pair)
+        })
+      );
     trades = [...trades, ...freshDemoTrades];
     saveTrades();
     render();
@@ -993,7 +2392,7 @@ function bindEvents() {
   });
 
   $("#exportJsonBtn").addEventListener("click", () => {
-    const content = JSON.stringify({ trades, strategies, exportedAt: new Date().toISOString() }, null, 2);
+    const content = JSON.stringify({ trades, strategies, customPairs, settings, exportedAt: new Date().toISOString() }, null, 2);
     downloadFile("fx-edge-journal.json", content, "application/json");
   });
 
@@ -1020,13 +2419,19 @@ function bindEvents() {
     showToast("Profile copied into the strategy builder.");
   });
 
-  window.addEventListener("resize", () => renderAnalytics(analyze(trades)));
+  window.addEventListener("resize", () => {
+    const analyticsTrades = getAnalyticsTrades();
+    renderAnalytics(analyze(analyticsTrades), analyticsTrades);
+  });
 }
 
 function bootstrap() {
+  renderPairOptions(defaultPair);
+  renderMarketChartOptions(marketChartPair);
   bindEvents();
   resetTradeForm();
   render();
+  renderTradingViewWidget();
   registerServiceWorker();
 }
 

@@ -39,6 +39,45 @@
         </button>
       </nav>
 
+      <section class="market-tools-panel sidebar-market-panel" aria-labelledby="market-tools-title">
+        <div class="market-panel-header">
+          <div>
+            <p class="eyebrow">Market Tools</p>
+            <h2 id="market-tools-title">Live Symbol</h2>
+          </div>
+          <div class="market-link-row">
+            <a class="icon-button link-button" href="https://pepperstone.com/en/platforms/trading-platforms/tradingview/" target="_blank" rel="noopener noreferrer" title="Open Pepperstone" aria-label="Open Pepperstone">
+              <img class="site-icon" src="https://pepperstone.com/favicon.ico" alt="" aria-hidden="true">
+            </a>
+            <a class="icon-button link-button" href="https://www.tradingview.com/chart/" target="_blank" rel="noopener noreferrer" title="Open TradingView" aria-label="Open TradingView">
+              <img class="site-icon" src="https://www.tradingview.com/favicon.ico" alt="" aria-hidden="true">
+            </a>
+          </div>
+        </div>
+
+        <div class="market-chart-controls">
+          <label>
+            <span>Symbol</span>
+            <select id="marketChartPairSelect"></select>
+          </label>
+          <label>
+            <span>Range</span>
+            <select id="marketChartInterval">
+              <option value="1D" selected>1D</option>
+              <option value="5D">5D</option>
+              <option value="1M">1M</option>
+              <option value="3M">3M</option>
+              <option value="12M">1Y</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="tradingview-widget-container market-chart-shell" id="tradingViewWidgetShell">
+          <div class="tradingview-widget-container__widget" id="tradingViewWidget"></div>
+          <a class="market-chart-overlay" id="marketChartOverlay" href="https://www.tradingview.com/symbols/XAUUSD/?exchange=PEPPERSTONE" target="_blank" rel="noopener noreferrer" aria-label="Open Pepperstone chart on TradingView"></a>
+        </div>
+      </section>
+
       <section class="track-panel" aria-labelledby="track-title">
         <div class="section-heading">
           <h2 id="track-title">Trader Track</h2>
@@ -136,20 +175,56 @@
                 </label>
                 <label>
                   <span>Pair</span>
-                  <input list="pairList" name="pair" placeholder="XAU/USD" required>
-                  <datalist id="pairList">
-                    <option value="EUR/USD">
-                    <option value="GBP/USD">
-                    <option value="USD/JPY">
-                    <option value="AUD/USD">
-                    <option value="USD/CAD">
-                    <option value="USD/CHF">
-                    <option value="NZD/USD">
-                    <option value="EUR/JPY">
-                    <option value="GBP/JPY">
-                    <option value="XAU/USD">
-                  </datalist>
+                  <select name="pair" id="pairSelect" required>
+                    <optgroup label="Metals">
+                      <option value="XAU/USD">XAU/USD - Gold</option>
+                      <option value="XAG/USD">XAG/USD - Silver</option>
+                    </optgroup>
+                    <optgroup label="Major FX">
+                      <option value="EUR/USD">EUR/USD</option>
+                      <option value="GBP/USD">GBP/USD</option>
+                      <option value="USD/JPY">USD/JPY</option>
+                      <option value="AUD/USD">AUD/USD</option>
+                      <option value="USD/CAD">USD/CAD</option>
+                      <option value="USD/CHF">USD/CHF</option>
+                      <option value="NZD/USD">NZD/USD</option>
+                    </optgroup>
+                    <optgroup label="Cross FX">
+                      <option value="EUR/JPY">EUR/JPY</option>
+                      <option value="GBP/JPY">GBP/JPY</option>
+                      <option value="AUD/JPY">AUD/JPY</option>
+                      <option value="CAD/JPY">CAD/JPY</option>
+                      <option value="CHF/JPY">CHF/JPY</option>
+                      <option value="NZD/JPY">NZD/JPY</option>
+                      <option value="EUR/GBP">EUR/GBP</option>
+                      <option value="EUR/AUD">EUR/AUD</option>
+                      <option value="EUR/CAD">EUR/CAD</option>
+                      <option value="EUR/CHF">EUR/CHF</option>
+                      <option value="GBP/AUD">GBP/AUD</option>
+                      <option value="GBP/CAD">GBP/CAD</option>
+                      <option value="GBP/CHF">GBP/CHF</option>
+                      <option value="AUD/CAD">AUD/CAD</option>
+                      <option value="AUD/NZD">AUD/NZD</option>
+                      <option value="NZD/CAD">NZD/CAD</option>
+                    </optgroup>
+                    <option value="__add_custom_pair__">Add custom pair...</option>
+                  </select>
                 </label>
+              </div>
+
+              <div class="custom-pair-row hidden" id="customPairRow">
+                <label>
+                  <span>New Pair</span>
+                  <input name="customPair" placeholder="BTC/USD">
+                </label>
+                <label>
+                  <span>Contract / Lot</span>
+                  <input type="number" name="customContractSize" min="0" step="0.0001" placeholder="1">
+                </label>
+                <button class="tool-button" type="button" id="addPairBtn">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                  Add Pair
+                </button>
               </div>
 
               <div class="form-grid two">
@@ -180,31 +255,86 @@
               <div class="form-grid four">
                 <label>
                   <span>Entry</span>
-                  <input type="number" name="entry" step="0.00001" placeholder="1.08450">
+                  <input type="number" name="entry" step="0.01" placeholder="2365.00">
                 </label>
                 <label>
                   <span>Stop</span>
-                  <input type="number" name="stop" step="0.00001" placeholder="1.08150">
+                  <input type="number" name="stop" step="0.01" placeholder="2355.00">
                 </label>
                 <label>
                   <span>Target</span>
-                  <input type="number" name="target" step="0.00001" placeholder="1.09100">
+                  <input type="number" name="target" step="0.01" placeholder="2385.00">
                 </label>
                 <label>
                   <span>Exit</span>
-                  <input type="number" name="exit" step="0.00001" placeholder="1.08900">
+                  <input type="number" name="exit" step="0.01" placeholder="2378.00">
                 </label>
               </div>
 
-              <div class="form-grid three">
+              <div class="form-grid four">
                 <label>
-                  <span>Risk $</span>
-                  <input type="number" name="risk" min="0" step="1" placeholder="100">
+                  <span>Lot Size</span>
+                  <input type="number" name="lotSize" min="0" step="0.01" placeholder="0.10">
+                </label>
+                <label>
+                  <span>Contract / Lot</span>
+                  <input type="number" name="contractSize" min="0" step="0.0001" placeholder="100" readonly>
+                </label>
+                <label>
+                  <span>Quote -> USD</span>
+                  <input type="number" name="quoteToAccount" min="0" step="0.000001" placeholder="Auto">
                 </label>
                 <label>
                   <span>Manual R</span>
                   <input type="number" name="manualR" step="0.01" placeholder="Auto">
                 </label>
+              </div>
+
+              <div class="form-grid three">
+                <label>
+                  <span>Comm / Lot</span>
+                  <input type="number" name="commissionPerLot" min="0" step="0.01" placeholder="7.00">
+                </label>
+                <label>
+                  <span>Commission</span>
+                  <input type="number" name="commission" step="0.01" placeholder="-0.70">
+                </label>
+                <label>
+                  <span>Swap</span>
+                  <input type="number" name="swap" step="0.01" placeholder="0.00">
+                </label>
+              </div>
+
+              <div class="calc-preview" aria-label="Live risk and reward calculation">
+                <article>
+                  <span>Actual RR</span>
+                  <strong id="previewActualR">0.00R</strong>
+                </article>
+                <article>
+                  <span>Target RR</span>
+                  <strong id="previewTargetR">0.00R</strong>
+                </article>
+                <article>
+                  <span>Risk</span>
+                  <strong id="previewRisk">$0</strong>
+                </article>
+                <article>
+                  <span>Target P/L</span>
+                  <strong id="previewTargetPl">$0</strong>
+                </article>
+                <article>
+                  <span>Actual P/L</span>
+                  <strong id="previewActualPl">$0</strong>
+                </article>
+                <article>
+                  <span>Pips</span>
+                  <strong id="previewPips">0.0</strong>
+                </article>
+              </div>
+
+              <p class="calc-note" id="previewFormula">Enter price, stop, target, exit, and lot size.</p>
+
+              <div class="form-grid one">
                 <label>
                   <span>Mistake</span>
                   <select name="mistake">
@@ -305,6 +435,34 @@
       </section>
 
       <section class="view" id="analyticsView">
+        <section class="panel analytics-filter-panel" aria-label="Analytics period filter">
+          <div class="analytics-filter-bar">
+            <label>
+              <span>Analysis Period</span>
+              <select id="analyticsRangeSelect">
+                <option value="all">All trades</option>
+                <option value="today">Today</option>
+                <option value="thisWeek">This week</option>
+                <option value="thisMonth">This month</option>
+                <option value="last7">Last 7 days</option>
+                <option value="last30">Last 30 days</option>
+                <option value="last90">Last 90 days</option>
+                <option value="ytd">Year to date</option>
+                <option value="custom">Custom dates</option>
+              </select>
+            </label>
+            <label class="custom-date-control hidden">
+              <span>From</span>
+              <input type="date" id="analyticsStartDate">
+            </label>
+            <label class="custom-date-control hidden">
+              <span>To</span>
+              <input type="date" id="analyticsEndDate">
+            </label>
+            <div class="analysis-scope" id="analyticsScope">All trades</div>
+          </div>
+        </section>
+
         <div class="analytics-grid">
           <section class="panel chart-panel" aria-labelledby="chart-title">
             <div class="panel-header">
@@ -312,9 +470,19 @@
                 <p class="eyebrow">Equity</p>
                 <h3 id="chart-title">Cumulative R Curve</h3>
               </div>
-              <span class="status-pill" id="expectancyPill">0.00R expectancy</span>
+              <div class="chart-controls">
+                <div class="segmented chart-period" aria-label="Cumulative R period">
+                  <button type="button" class="segment active" data-period="day">Day</button>
+                  <button type="button" class="segment" data-period="month">Month</button>
+                  <button type="button" class="segment" data-period="year">Year</button>
+                </div>
+                <span class="status-pill" id="expectancyPill">0.00R expectancy</span>
+              </div>
             </div>
-            <canvas id="equityChart" height="320"></canvas>
+            <div class="chart-wrap">
+              <canvas id="equityChart" height="320"></canvas>
+              <div class="chart-tooltip" id="equityTooltip" role="status" aria-live="polite"></div>
+            </div>
           </section>
 
           <section class="panel insights-panel" aria-labelledby="insights-title">
@@ -357,6 +525,114 @@
               </div>
             </div>
             <div id="mistakeBreakdown" class="leaderboard"></div>
+          </section>
+        </div>
+
+        <div class="chart-grid">
+          <section class="panel mini-chart-panel" aria-labelledby="period-pl-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Chart</p>
+                <h3 id="period-pl-title">Period Net P/L</h3>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="periodPlChart" height="260"></canvas>
+            </div>
+          </section>
+
+          <section class="panel mini-chart-panel" aria-labelledby="pair-pl-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Chart</p>
+                <h3 id="pair-pl-title">Pair Net P/L</h3>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="pairPlChart" height="260"></canvas>
+            </div>
+          </section>
+
+          <section class="panel mini-chart-panel" aria-labelledby="direction-pl-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Chart</p>
+                <h3 id="direction-pl-title">Long vs Short</h3>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="directionPlChart" height="260"></canvas>
+            </div>
+          </section>
+
+          <section class="panel mini-chart-panel" aria-labelledby="r-dist-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Chart</p>
+                <h3 id="r-dist-title">R Distribution</h3>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="rDistributionChart" height="260"></canvas>
+            </div>
+          </section>
+        </div>
+
+        <div class="chart-tooltip floating-chart-tooltip" id="barChartTooltip" role="status" aria-live="polite"></div>
+
+        <div class="report-grid">
+          <section class="panel" aria-labelledby="report-summary-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Report</p>
+                <h3 id="report-summary-title">Summary</h3>
+              </div>
+              <label class="compact-input">
+                <span>Start Balance</span>
+                <input type="number" id="startingBalanceInput" min="0" step="1" value="1000">
+              </label>
+            </div>
+            <div id="reportSummary" class="metric-list"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="report-pl-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Report</p>
+                <h3 id="report-pl-title">Profit & Loss</h3>
+              </div>
+            </div>
+            <div id="reportProfitLoss" class="metric-list"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="report-direction-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Report</p>
+                <h3 id="report-direction-title">Long & Short</h3>
+              </div>
+            </div>
+            <div id="reportLongShort" class="leaderboard"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="report-symbol-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Report</p>
+                <h3 id="report-symbol-title">Symbols</h3>
+              </div>
+            </div>
+            <div id="reportSymbols" class="leaderboard"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="report-risk-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Report</p>
+                <h3 id="report-risk-title">Risks</h3>
+              </div>
+            </div>
+            <div id="reportRisks" class="metric-list"></div>
           </section>
         </div>
       </section>
