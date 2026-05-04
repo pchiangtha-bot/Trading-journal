@@ -1718,6 +1718,16 @@ function isCompactChart(width = window.innerWidth) {
 
 function compactChartLabel(label) {
   const text = String(label || "");
+  const bucketLabels = {
+    "< -2R": "<-2",
+    "-2 to -1R": "-2/-1",
+    "-1 to 0R": "-1/0",
+    "0R": "0",
+    "0 to 1R": "0/1",
+    "1 to 2R": "1/2",
+    "> 2R": ">2"
+  };
+  if (bucketLabels[text]) return bucketLabels[text];
   const dateMatch = text.match(/^([A-Z][a-z]{2})\s+(\d{1,2}),/);
   if (dateMatch) return `${dateMatch[1]} ${dateMatch[2]}`;
   if (text.includes("/")) return text.replace("/", "");
@@ -1755,16 +1765,21 @@ function drawModernValueLabel(context, text, x, y, options = {}) {
   const previousShadowBlur = context.shadowBlur;
   const previousShadowOffsetY = context.shadowOffsetY;
 
+  const metrics = context.measureText(label);
+  const minX = options.minX ?? metrics.width / 2 + 4;
+  const maxX = options.maxX ?? Number.POSITIVE_INFINITY;
+  const safeX = clamp(x, minX, maxX);
+
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.lineWidth = options.outlineWidth ?? 4;
+  context.lineWidth = options.outlineWidth ?? 6;
   context.strokeStyle = options.outline || "rgba(255, 255, 255, 0.9)";
-  context.shadowColor = "rgba(31, 40, 38, 0.18)";
-  context.shadowBlur = 4;
-  context.shadowOffsetY = 1;
-  context.strokeText(label, x, y);
+  context.shadowColor = options.shadowColor || "rgba(31, 40, 38, 0.26)";
+  context.shadowBlur = options.shadowBlur ?? 6;
+  context.shadowOffsetY = options.shadowOffsetY ?? 1.5;
+  context.strokeText(label, safeX, y);
   context.fillStyle = options.color || "#1f2826";
-  context.fillText(label, x, y);
+  context.fillText(label, safeX, y);
 
   context.textAlign = previousAlign;
   context.textBaseline = previousBaseline;
@@ -1774,6 +1789,18 @@ function drawModernValueLabel(context, text, x, y, options = {}) {
   context.shadowColor = previousShadowColor;
   context.shadowBlur = previousShadowBlur;
   context.shadowOffsetY = previousShadowOffsetY;
+}
+
+function drawAxisText(context, text, x, y, options = {}) {
+  drawModernValueLabel(context, text, x, y, {
+    color: options.color || "#1f2826",
+    outline: options.outline || "rgba(255, 255, 255, 0.96)",
+    outlineWidth: options.outlineWidth || 5,
+    shadowBlur: options.shadowBlur || 2,
+    shadowColor: options.shadowColor || "rgba(31, 40, 38, 0.14)",
+    minX: options.minX,
+    maxX: options.maxX
+  });
 }
 
 function ensureChartHitLayer(canvas) {
@@ -1967,17 +1994,13 @@ function drawEquityChart(equity, period = "day") {
 
   context.font = compact ? "800 14px Segoe UI, sans-serif" : "700 12px Segoe UI, sans-serif";
   context.textAlign = "left";
-  drawCanvasLabel(context, formatR(yMax), padding.left, padding.top + 6, {
-    height: compact ? 22 : 18,
-    background: "rgba(255, 255, 255, 0.92)",
-    minLeft: 4,
-    maxLeft: width - 70
+  drawAxisText(context, formatR(yMax), padding.left, padding.top + 6, {
+    minX: 16,
+    maxX: width - 16
   });
-  drawCanvasLabel(context, formatR(yMin), padding.left, height - padding.bottom + 4, {
-    height: compact ? 22 : 18,
-    background: "rgba(255, 255, 255, 0.92)",
-    minLeft: 4,
-    maxLeft: width - 70
+  drawAxisText(context, formatR(yMin), padding.left, height - padding.bottom + 4, {
+    minX: 16,
+    maxX: width - 16
   });
   drawChartLabels(context, points, labels, height, width);
   equityChartState = { points, period, width, height };
@@ -2001,12 +2024,10 @@ function drawChartLabels(context, points, labels, height, width = 320) {
     const point = points[index];
     const label = compact ? compactChartLabel(labels[index]) : labels[index] || "";
     context.textAlign = index === 0 ? "left" : index === points.length - 1 ? "right" : "center";
-    drawCanvasLabel(context, label, point.x, height - 12, {
-      height: compact ? 22 : 18,
-      background: "rgba(255, 255, 255, 0.9)",
-      color: "#1f2826",
-      minLeft: 4,
-      maxLeft: width - 90
+    drawAxisText(context, label, point.x, height - 13, {
+      minX: 18,
+      maxX: width - 18,
+      outlineWidth: compact ? 6 : 5
     });
   });
   context.textAlign = "left";
@@ -2184,29 +2205,33 @@ function drawBarChart(canvasId, data, options = {}) {
     });
 
     context.fillStyle = "#1f2826";
-    context.font = compact ? "800 15px Segoe UI, sans-serif" : "700 12px Segoe UI, sans-serif";
+    context.font = compact ? "900 17px Segoe UI, sans-serif" : "800 13px Segoe UI, sans-serif";
     context.textAlign = "center";
     const valueText = options.formatter ? options.formatter(value) : numberFormatter.format(value);
-    const shouldDrawValue = !compact || cleanData.length <= 8;
+    const shouldDrawValue = value !== 0 && (!compact || cleanData.length <= 8);
     if (shouldDrawValue) {
       const labelY = value >= 0 ? Math.max(top - 12, 22) : Math.min(top + 20, height - padding.bottom - 8);
+      const insideBar = value < 0 && labelY >= top && labelY <= top + barHeight;
       drawModernValueLabel(context, valueText, x + barWidth / 2, labelY, {
-        color: isCount ? "#2563eb" : value >= 0 ? "#0f766e" : "#be123c",
-        outline: "rgba(255, 255, 255, 0.88)",
-        outlineWidth: compact ? 5 : 4
+        color: insideBar ? "#ffffff" : "#1f2826",
+        outline: insideBar ? "rgba(31, 40, 38, 0.42)" : "rgba(255, 255, 255, 0.98)",
+        outlineWidth: compact ? 7 : 5,
+        shadowBlur: compact ? 7 : 4,
+        shadowColor: insideBar ? "rgba(31, 40, 38, 0.3)" : "rgba(31, 40, 38, 0.2)",
+        minX: 18,
+        maxX: width - 18
       });
     }
 
-    context.font = compact ? "800 13px Segoe UI, sans-serif" : "700 11px Segoe UI, sans-serif";
+    context.font = compact ? "900 14px Segoe UI, sans-serif" : "800 12px Segoe UI, sans-serif";
     const label = compact ? compactChartLabel(item.label) : String(item.label).length > 10 ? `${String(item.label).slice(0, 9)}...` : String(item.label);
     const shouldDrawLabel = !compact || cleanData.length <= 8;
     if (shouldDrawLabel) {
-      drawCanvasLabel(context, label, x + barWidth / 2, height - 28, {
-        height: compact ? 22 : 18,
-        background: "rgba(255, 255, 255, 0.9)",
-        color: "#1f2826",
-        minLeft: 4,
-        maxLeft: width - 76
+      drawAxisText(context, label, x + barWidth / 2, height - 30, {
+        minX: 16,
+        maxX: width - 16,
+        outlineWidth: compact ? 6 : 5,
+        shadowBlur: 2
       });
     }
   });
