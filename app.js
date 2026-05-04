@@ -2811,7 +2811,15 @@ bootstrap();
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  navigator.serviceWorker.register("./sw.js").catch(() => {
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+  navigator.serviceWorker.register("./sw.js").then((registration) => {
+    registration.update();
+  }).catch(() => {
     // Some local file and non-secure hosts do not allow service workers.
   });
 }

@@ -19,6 +19,8 @@ Quick local test from your computer:
 
 A permanent setup should use an HTTPS host such as GitHub Pages, Netlify, or Vercel. Offline caching works only on supported secure web origins.
 
+If the Home Screen app still shows an older version after you update the files, delete the old Home Screen icon, then clear Safari data for your site in Settings > Safari > Advanced > Website Data. Reopen the GitHub Pages URL in Safari, wait for the latest page to load, then add it to the Home Screen again.
+
 ## Included
 
 - Trade ticket with pair, session, direction, setup, risk, entry, stop, target, exit, emotions, discipline, tags, mistakes, and notes
