@@ -1636,7 +1636,7 @@ function getCanvasDisplaySize(canvas, fallbackHeight) {
   const cssHeight = parseFloat(getComputedStyle(canvas).height);
   const width = Math.max(rect.width || 0, wrapRect?.width || 0, fallbackWidth);
   const height = Math.max(cssHeight || fallbackHeight, fallbackHeight * 0.85);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
   return { width, height, dpr };
 }
 
@@ -1649,7 +1649,11 @@ function eventClientPoint(event) {
 }
 
 function isTouchLikeEvent(event) {
-  return event.pointerType === "touch" || event.type.startsWith("touch") || event.type === "click";
+  return event.pointerType === "touch" || event.type.startsWith("touch");
+}
+
+function isCoarseChartInput(event) {
+  return event?.pointerType === "touch" || event?.type?.startsWith("touch") || window.matchMedia?.("(pointer: coarse)")?.matches;
 }
 
 function setChartReadout(chartId, title, lines = []) {
@@ -1674,11 +1678,38 @@ function scheduleTouchTooltipHide() {
   }, 3600);
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 function positionFloatingTooltip(tooltip, clientX, clientY) {
-  const safeX = Math.min(Math.max(clientX, 128), Math.max(window.innerWidth - 128, 128));
-  const safeY = Math.min(Math.max(clientY, 180), Math.max(window.innerHeight - 18, 180));
-  tooltip.style.left = `${safeX}px`;
-  tooltip.style.top = `${safeY}px`;
+  tooltip.style.transform = "none";
+  const width = tooltip.offsetWidth || 280;
+  const height = tooltip.offsetHeight || 120;
+  const left = clamp(clientX + 12, 12, Math.max(window.innerWidth - width - 12, 12));
+  const preferredTop = clientY - height - 12;
+  const top = preferredTop > 12
+    ? preferredTop
+    : clamp(clientY + 12, 12, Math.max(window.innerHeight - height - 12, 12));
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+}
+
+function positionChartTooltip(tooltip, canvas, x, y) {
+  const wrap = canvas.closest(".chart-wrap");
+  if (!wrap) return;
+  tooltip.style.transform = "none";
+  const width = tooltip.offsetWidth || 240;
+  const height = tooltip.offsetHeight || 110;
+  const canvasLeft = canvas.offsetLeft;
+  const canvasTop = canvas.offsetTop;
+  const maxLeft = Math.max(wrap.clientWidth - width - 8, 8);
+  const left = clamp(canvasLeft + x + 10, 8, maxLeft);
+  const preferredTop = canvasTop + y - height - 10;
+  const maxTop = Math.max(canvasTop + canvas.clientHeight - height - 8, 8);
+  const top = preferredTop > 8 ? preferredTop : clamp(canvasTop + y + 10, 8, maxTop);
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
 }
 
 function isCompactChart(width = window.innerWidth) {
@@ -1696,17 +1727,53 @@ function compactChartLabel(label) {
 function drawCanvasLabel(context, text, x, y, options = {}) {
   const label = String(text || "");
   if (!label) return;
+  const previousAlign = context.textAlign;
   const paddingX = options.paddingX ?? 5;
   const paddingY = options.paddingY ?? 3;
   const metrics = context.measureText(label);
   const width = metrics.width + paddingX * 2;
   const height = options.height ?? 20;
-  const left = x - width / 2;
+  const left = clamp(x - width / 2, options.minLeft ?? 0, options.maxLeft ?? Number.POSITIVE_INFINITY);
   const top = y - height + 4;
   context.fillStyle = options.background || "rgba(253, 252, 248, 0.86)";
   context.fillRect(left, top, width, height);
   context.fillStyle = options.color || "#1f2826";
+  context.textAlign = "center";
+  context.fillText(label, left + width / 2, y);
+  context.textAlign = previousAlign;
+}
+
+function drawModernValueLabel(context, text, x, y, options = {}) {
+  const label = String(text || "");
+  if (!label) return;
+  const previousAlign = context.textAlign;
+  const previousBaseline = context.textBaseline;
+  const previousLineWidth = context.lineWidth;
+  const previousStroke = context.strokeStyle;
+  const previousFill = context.fillStyle;
+  const previousShadowColor = context.shadowColor;
+  const previousShadowBlur = context.shadowBlur;
+  const previousShadowOffsetY = context.shadowOffsetY;
+
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.lineWidth = options.outlineWidth ?? 4;
+  context.strokeStyle = options.outline || "rgba(255, 255, 255, 0.9)";
+  context.shadowColor = "rgba(31, 40, 38, 0.18)";
+  context.shadowBlur = 4;
+  context.shadowOffsetY = 1;
+  context.strokeText(label, x, y);
+  context.fillStyle = options.color || "#1f2826";
   context.fillText(label, x, y);
+
+  context.textAlign = previousAlign;
+  context.textBaseline = previousBaseline;
+  context.lineWidth = previousLineWidth;
+  context.strokeStyle = previousStroke;
+  context.fillStyle = previousFill;
+  context.shadowColor = previousShadowColor;
+  context.shadowBlur = previousShadowBlur;
+  context.shadowOffsetY = previousShadowOffsetY;
 }
 
 function ensureChartHitLayer(canvas) {
@@ -1744,9 +1811,12 @@ function makeHitButton(label, zone, onPick) {
   button.style.width = `${zone.width}px`;
   button.style.height = `${zone.height}px`;
   const pick = (event) => {
+    event.preventDefault();
     const point = eventClientPoint(event);
     onPick(point, event);
   };
+  button.addEventListener("pointerenter", pick);
+  button.addEventListener("pointermove", pick);
   button.addEventListener("pointerdown", pick);
   button.addEventListener("click", pick);
   button.addEventListener("focus", (event) => {
@@ -1885,21 +1955,31 @@ function drawEquityChart(equity, period = "day") {
     else context.lineTo(point.x, point.y);
   });
   context.strokeStyle = "#0f766e";
-  context.lineWidth = 3;
+  context.lineWidth = compact ? 4 : 3;
   context.stroke();
 
   points.forEach((point) => {
     context.beginPath();
-    context.arc(point.x, point.y, 3, 0, Math.PI * 2);
+    context.arc(point.x, point.y, compact ? 5 : 3, 0, Math.PI * 2);
     context.fillStyle = point.value >= 0 ? "#0f766e" : "#be123c";
     context.fill();
   });
 
-  context.fillStyle = "#69736f";
-  context.font = compact ? "700 13px Segoe UI, sans-serif" : "12px Segoe UI, sans-serif";
-  context.fillText(formatR(yMax), 10, padding.top + 4);
-  context.fillText(formatR(yMin), 10, height - padding.bottom);
-  drawChartLabels(context, points, labels, height);
+  context.font = compact ? "800 14px Segoe UI, sans-serif" : "700 12px Segoe UI, sans-serif";
+  context.textAlign = "left";
+  drawCanvasLabel(context, formatR(yMax), padding.left, padding.top + 6, {
+    height: compact ? 22 : 18,
+    background: "rgba(255, 255, 255, 0.92)",
+    minLeft: 4,
+    maxLeft: width - 70
+  });
+  drawCanvasLabel(context, formatR(yMin), padding.left, height - padding.bottom + 4, {
+    height: compact ? 22 : 18,
+    background: "rgba(255, 255, 255, 0.92)",
+    minLeft: 4,
+    maxLeft: width - 70
+  });
+  drawChartLabels(context, points, labels, height, width);
   equityChartState = { points, period, width, height };
   installEquityHitZones(canvas, points);
 }
@@ -1910,19 +1990,24 @@ function drawChartFrame(context, width, height, padding) {
   context.strokeRect(padding.left, padding.top, width - padding.left - padding.right, height - padding.top - padding.bottom);
 }
 
-function drawChartLabels(context, points, labels, height) {
+function drawChartLabels(context, points, labels, height, width = 320) {
   if (!points.length) return;
-  const compact = isCompactChart(points[points.length - 1]?.x || 0);
+  const compact = isCompactChart(width);
   const indexes = compact
     ? [...new Set([0, points.length - 1])]
     : [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
-  context.fillStyle = "#69736f";
-  context.font = compact ? "700 13px Segoe UI, sans-serif" : "12px Segoe UI, sans-serif";
+  context.font = compact ? "800 13px Segoe UI, sans-serif" : "700 12px Segoe UI, sans-serif";
   indexes.forEach((index) => {
     const point = points[index];
     const label = compact ? compactChartLabel(labels[index]) : labels[index] || "";
     context.textAlign = index === 0 ? "left" : index === points.length - 1 ? "right" : "center";
-    context.fillText(label, point.x, height - 10);
+    drawCanvasLabel(context, label, point.x, height - 12, {
+      height: compact ? 22 : 18,
+      background: "rgba(255, 255, 255, 0.9)",
+      color: "#1f2826",
+      minLeft: 4,
+      maxLeft: width - 90
+    });
   });
   context.textAlign = "left";
 }
@@ -2050,7 +2135,7 @@ function drawBarChart(canvasId, data, options = {}) {
 
   const compact = isCompactChart(width);
   const padding = compact
-    ? { top: 36, right: 12, bottom: 76, left: 34 }
+    ? { top: 42, right: 12, bottom: 84, left: 34 }
     : { top: 24, right: 18, bottom: 54, left: 54 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
@@ -2099,22 +2184,31 @@ function drawBarChart(canvasId, data, options = {}) {
     });
 
     context.fillStyle = "#1f2826";
-    context.font = compact ? "800 13px Segoe UI, sans-serif" : "11px Segoe UI, sans-serif";
+    context.font = compact ? "800 15px Segoe UI, sans-serif" : "700 12px Segoe UI, sans-serif";
     context.textAlign = "center";
     const valueText = options.formatter ? options.formatter(value) : numberFormatter.format(value);
-    const shouldDrawValue = !compact || cleanData.length <= 6 || index % 2 === 0;
+    const shouldDrawValue = !compact || cleanData.length <= 8;
     if (shouldDrawValue) {
-      drawCanvasLabel(context, valueText, x + barWidth / 2, Math.max(top - 7, 18), {
-        height: compact ? 22 : 18,
-        color: "#1f2826"
+      const labelY = value >= 0 ? Math.max(top - 12, 22) : Math.min(top + 20, height - padding.bottom - 8);
+      drawModernValueLabel(context, valueText, x + barWidth / 2, labelY, {
+        color: isCount ? "#2563eb" : value >= 0 ? "#0f766e" : "#be123c",
+        outline: "rgba(255, 255, 255, 0.88)",
+        outlineWidth: compact ? 5 : 4
       });
     }
 
-    context.fillStyle = "#69736f";
-    context.font = compact ? "800 13px Segoe UI, sans-serif" : "11px Segoe UI, sans-serif";
+    context.font = compact ? "800 13px Segoe UI, sans-serif" : "700 11px Segoe UI, sans-serif";
     const label = compact ? compactChartLabel(item.label) : String(item.label).length > 10 ? `${String(item.label).slice(0, 9)}...` : String(item.label);
-    const shouldDrawLabel = !compact || cleanData.length <= 6 || index % 2 === 0;
-    if (shouldDrawLabel) context.fillText(label, x + barWidth / 2, height - 28);
+    const shouldDrawLabel = !compact || cleanData.length <= 8;
+    if (shouldDrawLabel) {
+      drawCanvasLabel(context, label, x + barWidth / 2, height - 28, {
+        height: compact ? 22 : 18,
+        background: "rgba(255, 255, 255, 0.9)",
+        color: "#1f2826",
+        minLeft: 4,
+        maxLeft: width - 76
+      });
+    }
   });
 
   context.textAlign = "left";
@@ -2147,8 +2241,14 @@ function barSummary(bar, options = {}) {
 function showBarDetail(canvas, bar, clientX, clientY, persist = false) {
   const state = barChartStates[canvas.id];
   const tooltip = $("#barChartTooltip");
-  if (!state || !tooltip) return;
+  if (!state) return;
   const summary = barSummary(bar, state.options);
+  setChartReadout(canvas.id, bar.label, summary.lines);
+
+  if (!tooltip || isCoarseChartInput({ type: persist ? "touch" : "mouse", pointerType: persist ? "touch" : "mouse" })) {
+    hideBarChartTooltip();
+    return;
+  }
 
   tooltip.innerHTML = `
     <strong>${escapeHtml(bar.label)}</strong>
@@ -2156,7 +2256,6 @@ function showBarDetail(canvas, bar, clientX, clientY, persist = false) {
     <p>${escapeHtml(summary.lines[1])}</p>
     <p>${escapeHtml(summary.conclusion)}</p>
   `;
-  setChartReadout(canvas.id, bar.label, summary.lines);
   positionFloatingTooltip(tooltip, clientX, clientY);
   tooltip.classList.add("visible");
   if (persist) scheduleTouchTooltipHide();
@@ -2175,6 +2274,12 @@ function findBarFromPoint(state, x, y) {
     const distance = Math.abs(centerX - x);
     return distance < best.distance ? { bar: item, distance } : best;
   }, { bar: null, distance: Infinity }).bar;
+}
+
+function pointerStillInsideChart(event) {
+  const related = event.relatedTarget;
+  if (!(related instanceof Node)) return false;
+  return Boolean(event.currentTarget.closest(".chart-wrap")?.contains(related));
 }
 
 function handleBarChartPointerMove(event) {
@@ -2203,7 +2308,7 @@ function hideBarChartTooltip() {
 }
 
 function handleBarChartPointerLeave(event) {
-  if (isTouchLikeEvent(event)) return;
+  if (isTouchLikeEvent(event) || pointerStillInsideChart(event)) return;
   hideBarChartTooltip();
 }
 
@@ -2230,22 +2335,21 @@ function equitySummary(point) {
 function showEquityDetail(point, clientX, clientY, persist = false) {
   const canvas = $("#equityChart");
   const tooltip = $("#equityTooltip");
-  if (!canvas || !tooltip) return;
-  const rect = canvas.getBoundingClientRect();
+  if (!canvas) return;
   const summary = equitySummary(point);
+  setChartReadout("equityChart", point.label, summary.lines);
+
+  if (!tooltip || isCoarseChartInput({ type: persist ? "touch" : "mouse", pointerType: persist ? "touch" : "mouse" })) {
+    hideEquityTooltip();
+    return;
+  }
 
   tooltip.innerHTML = `
     <strong>${escapeHtml(point.label)}</strong>
     <p>${escapeHtml(summary.lines[0])}</p>
     <p>${escapeHtml(summary.lines[1])}. ${escapeHtml(summary.conclusion)}</p>
   `;
-  setChartReadout("equityChart", point.label, summary.lines);
-
-  const horizontalEdge = Math.min(110, rect.width / 2);
-  const tooltipX = Math.min(Math.max(point.x, horizontalEdge), rect.width - horizontalEdge);
-  const tooltipY = Math.max(point.y, 145);
-  tooltip.style.left = `${tooltipX}px`;
-  tooltip.style.top = `${tooltipY}px`;
+  positionChartTooltip(tooltip, canvas, point.x, point.y);
   tooltip.classList.add("visible");
   if (persist) scheduleTouchTooltipHide();
 }
@@ -2279,7 +2383,7 @@ function hideEquityTooltip() {
 }
 
 function handleEquityPointerLeave(event) {
-  if (isTouchLikeEvent(event)) return;
+  if (isTouchLikeEvent(event) || pointerStillInsideChart(event)) return;
   hideEquityTooltip();
 }
 
@@ -2288,7 +2392,11 @@ function bindChartInteractions(canvas, moveHandler, leaveHandler) {
   canvas.addEventListener("pointermove", moveHandler);
   canvas.addEventListener("pointerdown", moveHandler);
   canvas.addEventListener("click", moveHandler);
-  canvas.addEventListener("pointerleave", leaveHandler);
+  const wrap = canvas.closest(".chart-wrap");
+  if (wrap && !wrap.dataset.hoverBound) {
+    wrap.dataset.hoverBound = "true";
+    wrap.addEventListener("pointerleave", leaveHandler);
+  }
 
   if (!window.PointerEvent) {
     canvas.addEventListener("touchstart", moveHandler, { passive: true });
