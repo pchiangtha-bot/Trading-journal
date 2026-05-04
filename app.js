@@ -13,6 +13,8 @@ const customPairValue = "__add_custom_pair__";
 let equityPeriod = "day";
 let equityChartState = { points: [] };
 let barChartStates = {};
+let chartTouchHideTimer = null;
+let analyticsResizeTimer = null;
 let analyticsRange = "all";
 let analyticsCustomStart = "";
 let analyticsCustomEnd = "";
@@ -1618,14 +1620,73 @@ function renderAnalytics(stats, sourceTrades = getAnalyticsTrades()) {
   renderReportAnalysis(sourceTrades);
 }
 
+function rerenderAnalyticsSoon(delay = 120) {
+  clearTimeout(analyticsResizeTimer);
+  analyticsResizeTimer = setTimeout(() => {
+    const analyticsTrades = getAnalyticsTrades();
+    renderAnalytics(analyze(analyticsTrades), analyticsTrades);
+  }, delay);
+}
+
+function getCanvasDisplaySize(canvas, fallbackHeight) {
+  const rect = canvas.getBoundingClientRect();
+  const wrapRect = canvas.closest(".chart-wrap")?.getBoundingClientRect();
+  const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+  const fallbackWidth = Math.min(Math.max(viewportWidth - 48, 280), 760);
+  const cssHeight = parseFloat(getComputedStyle(canvas).height);
+  const width = Math.max(rect.width || 0, wrapRect?.width || 0, fallbackWidth);
+  const height = Math.max(cssHeight || fallbackHeight, fallbackHeight * 0.85);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  return { width, height, dpr };
+}
+
+function eventClientPoint(event) {
+  const touch = event.touches?.[0] || event.changedTouches?.[0];
+  return {
+    clientX: touch?.clientX ?? event.clientX,
+    clientY: touch?.clientY ?? event.clientY
+  };
+}
+
+function isTouchLikeEvent(event) {
+  return event.pointerType === "touch" || event.type.startsWith("touch") || event.type === "click";
+}
+
+function setChartReadout(chartId, title, lines = []) {
+  const readout = $(`#${chartId}Readout`);
+  if (!readout) return;
+  readout.innerHTML = `
+    <strong>${escapeHtml(title)}</strong>
+    ${lines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+  `;
+}
+
+function resetChartReadout(chartId, message) {
+  const readout = $(`#${chartId}Readout`);
+  if (readout) readout.textContent = message;
+}
+
+function scheduleTouchTooltipHide() {
+  clearTimeout(chartTouchHideTimer);
+  chartTouchHideTimer = setTimeout(() => {
+    hideEquityTooltip();
+    hideBarChartTooltip();
+  }, 3600);
+}
+
+function positionFloatingTooltip(tooltip, clientX, clientY) {
+  const safeX = Math.min(Math.max(clientX, 128), Math.max(window.innerWidth - 128, 128));
+  const safeY = Math.min(Math.max(clientY, 180), Math.max(window.innerHeight - 18, 180));
+  tooltip.style.left = `${safeX}px`;
+  tooltip.style.top = `${safeY}px`;
+}
+
 function drawEquityChart(equity, period = "day") {
   const canvas = $("#equityChart");
   const context = canvas.getContext("2d");
   hideEquityTooltip();
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(rect.width, 320);
-  const height = 320;
+  resetChartReadout("equityChart", "Tap or drag the curve to see period details.");
+  const { width, height, dpr } = getCanvasDisplaySize(canvas, 320);
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1807,23 +1868,27 @@ function renderPerformanceCharts(sourceTrades = getAnalyticsTrades()) {
   drawBarChart("periodPlChart", periodData, {
     formatter: (value) => currencyFormatter.format(value),
     empty: "No period P/L yet",
-    valueLabel: "Net P/L"
+    valueLabel: "Net P/L",
+    prompt: "Tap a bar to see period P/L details."
   });
   drawBarChart("pairPlChart", pairData, {
     formatter: (value) => currencyFormatter.format(value),
     empty: "No pair P/L yet",
-    valueLabel: "Net P/L"
+    valueLabel: "Net P/L",
+    prompt: "Tap a bar to see pair performance details."
   });
   drawBarChart("directionPlChart", directionData, {
     formatter: (value) => currencyFormatter.format(value),
     empty: "No long/short P/L yet",
-    valueLabel: "Net P/L"
+    valueLabel: "Net P/L",
+    prompt: "Tap a bar to compare buy and sell performance."
   });
   drawBarChart("rDistributionChart", rDistributionData(sourceTrades), {
     formatter: (value) => `${numberFormatter.format(value)} trades`,
     colorMode: "count",
     empty: "No R distribution yet",
-    valueLabel: "Orders"
+    valueLabel: "Orders",
+    prompt: "Tap a bar to inspect the R bucket."
   });
 }
 
@@ -1831,11 +1896,10 @@ function drawBarChart(canvasId, data, options = {}) {
   const canvas = $(`#${canvasId}`);
   if (!canvas) return;
   hideBarChartTooltip();
+  resetChartReadout(canvasId, options.prompt || "Tap a bar to see chart details.");
   const context = canvas.getContext("2d");
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.max(rect.width, 320);
-  const height = Number(canvas.getAttribute("height")) || 260;
+  const fallbackHeight = Number(canvas.getAttribute("height")) || 260;
+  const { width, height, dpr } = getCanvasDisplaySize(canvas, fallbackHeight);
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1846,6 +1910,7 @@ function drawBarChart(canvasId, data, options = {}) {
   const cleanData = data.filter((item) => item && item.label);
   if (!cleanData.length || cleanData.every((item) => toNumber(item.value) === 0)) {
     barChartStates[canvasId] = { bars: [], options };
+    resetChartReadout(canvasId, options.empty || "No data yet");
     context.fillStyle = "#69736f";
     context.font = "14px Segoe UI, sans-serif";
     context.fillText(options.empty || "No data yet", 18, height / 2);
@@ -1913,9 +1978,11 @@ function handleBarChartPointerMove(event) {
   const tooltip = $("#barChartTooltip");
   if (!state || !state.bars.length || !tooltip) return;
 
+  const point = eventClientPoint(event);
+  if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) return;
   const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
+  const x = point.clientX - rect.left;
+  const y = point.clientY - rect.top;
   const bar = state.bars.find((item) => {
     const withinX = x >= item.x - 4 && x <= item.x + item.width + 4;
     const withinY = y >= Math.min(item.y, item.y + item.height) - 18 && y <= Math.max(item.y, item.y + item.height) + 18;
@@ -1923,7 +1990,7 @@ function handleBarChartPointerMove(event) {
   });
 
   if (!bar) {
-    hideBarChartTooltip();
+    if (!isTouchLikeEvent(event)) hideBarChartTooltip();
     return;
   }
 
@@ -1944,9 +2011,14 @@ function handleBarChartPointerMove(event) {
     <p>${escapeHtml(bar.detail || `${numberFormatter.format(bar.count)} orders`)}</p>
     <p>${escapeHtml(conclusion)}</p>
   `;
-  tooltip.style.left = `${event.clientX}px`;
-  tooltip.style.top = `${event.clientY}px`;
+  setChartReadout(canvas.id, bar.label, [
+    `${state.options.valueLabel || "Value"}: ${valueText}`,
+    bar.detail || `${numberFormatter.format(bar.count)} orders`,
+    conclusion
+  ]);
+  positionFloatingTooltip(tooltip, point.clientX, point.clientY);
   tooltip.classList.add("visible");
+  if (isTouchLikeEvent(event)) scheduleTouchTooltipHide();
 }
 
 function hideBarChartTooltip() {
@@ -1954,21 +2026,28 @@ function hideBarChartTooltip() {
   if (tooltip) tooltip.classList.remove("visible");
 }
 
+function handleBarChartPointerLeave(event) {
+  if (isTouchLikeEvent(event)) return;
+  hideBarChartTooltip();
+}
+
 function handleEquityPointerMove(event) {
   const canvas = $("#equityChart");
   const tooltip = $("#equityTooltip");
   if (!canvas || !tooltip || !equityChartState.points.length) return;
 
+  const eventPoint = eventClientPoint(event);
+  if (!Number.isFinite(eventPoint.clientX) || !Number.isFinite(eventPoint.clientY)) return;
   const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
+  const x = eventPoint.clientX - rect.left;
+  const y = eventPoint.clientY - rect.top;
   const nearest = equityChartState.points.reduce((best, point) => {
     const distance = Math.hypot(point.x - x, point.y - y);
     return distance < best.distance ? { point, distance } : best;
   }, { point: null, distance: Infinity });
 
   if (!nearest.point || nearest.distance > 32) {
-    hideEquityTooltip();
+    if (!isTouchLikeEvent(event)) hideEquityTooltip();
     return;
   }
 
@@ -1988,18 +2067,42 @@ function handleEquityPointerMove(event) {
     <p>${point.count || 0} trades, ${formatR(periodR)} this ${equityChartState.period}.</p>
     <p>Cumulative ${formatR(point.value)}. ${escapeHtml(conclusion)}</p>
   `;
+  setChartReadout("equityChart", point.label, [
+    `${point.count || 0} trades, ${formatR(periodR)} this ${equityChartState.period}`,
+    `Cumulative ${formatR(point.value)}`,
+    conclusion
+  ]);
 
   const horizontalEdge = Math.min(110, rect.width / 2);
   const tooltipX = Math.min(Math.max(point.x, horizontalEdge), rect.width - horizontalEdge);
-  const tooltipY = Math.max(point.y, 80);
+  const tooltipY = Math.max(point.y, 145);
   tooltip.style.left = `${tooltipX}px`;
   tooltip.style.top = `${tooltipY}px`;
   tooltip.classList.add("visible");
+  if (isTouchLikeEvent(event)) scheduleTouchTooltipHide();
 }
 
 function hideEquityTooltip() {
   const tooltip = $("#equityTooltip");
   if (tooltip) tooltip.classList.remove("visible");
+}
+
+function handleEquityPointerLeave(event) {
+  if (isTouchLikeEvent(event)) return;
+  hideEquityTooltip();
+}
+
+function bindChartInteractions(canvas, moveHandler, leaveHandler) {
+  if (!canvas) return;
+  canvas.addEventListener("pointermove", moveHandler);
+  canvas.addEventListener("pointerdown", moveHandler);
+  canvas.addEventListener("click", moveHandler);
+  canvas.addEventListener("pointerleave", leaveHandler);
+
+  if (!window.PointerEvent) {
+    canvas.addEventListener("touchstart", moveHandler, { passive: true });
+    canvas.addEventListener("touchmove", moveHandler, { passive: true });
+  }
 }
 
 function renderInsights(stats, sourceTrades = getAnalyticsTrades()) {
@@ -2555,6 +2658,7 @@ function bindEvents() {
       $(`#${button.dataset.view}View`).classList.add("active");
       $("#viewTitle").textContent = button.textContent.trim();
       render();
+      if (button.dataset.view === "analytics") rerenderAnalyticsSoon(60);
     });
   });
 
@@ -2573,18 +2677,15 @@ function bindEvents() {
       equityPeriod = button.dataset.period || "day";
       $$(".chart-period .segment").forEach((segment) => segment.classList.remove("active"));
       button.classList.add("active");
-      const analyticsTrades = getAnalyticsTrades();
-      renderAnalytics(analyze(analyticsTrades), analyticsTrades);
+      rerenderAnalyticsSoon(0);
     });
   });
 
-  $("#equityChart").addEventListener("pointermove", handleEquityPointerMove);
-  $("#equityChart").addEventListener("pointerleave", hideEquityTooltip);
+  bindChartInteractions($("#equityChart"), handleEquityPointerMove, handleEquityPointerLeave);
   ["periodPlChart", "pairPlChart", "directionPlChart", "rDistributionChart"].forEach((id) => {
     const canvas = $(`#${id}`);
     if (!canvas) return;
-    canvas.addEventListener("pointermove", handleBarChartPointerMove);
-    canvas.addEventListener("pointerleave", hideBarChartTooltip);
+    bindChartInteractions(canvas, handleBarChartPointerMove, handleBarChartPointerLeave);
   });
 
   updateAnalyticsFilterControls();
@@ -2786,10 +2887,8 @@ function bindEvents() {
     showToast("Profile copied into the strategy builder.");
   });
 
-  window.addEventListener("resize", () => {
-    const analyticsTrades = getAnalyticsTrades();
-    renderAnalytics(analyze(analyticsTrades), analyticsTrades);
-  });
+  window.addEventListener("resize", () => rerenderAnalyticsSoon());
+  window.addEventListener("orientationchange", () => rerenderAnalyticsSoon(320));
 }
 
 function bootstrap() {

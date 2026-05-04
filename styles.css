@@ -747,11 +747,23 @@ td {
 .chart-wrap {
   position: relative;
   margin-top: 12px;
+  min-width: 0;
+  overflow: visible;
+}
+
+.chart-panel canvas,
+.mini-chart-panel canvas {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border-radius: var(--radius);
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .chart-panel canvas {
-  display: block;
-  width: 100%;
   height: 320px;
 }
 
@@ -791,6 +803,27 @@ td {
   color: var(--muted);
   font-size: 0.82rem;
   line-height: 1.35;
+}
+
+.chart-touch-readout {
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: var(--surface-strong);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.chart-touch-readout strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink);
+}
+
+.chart-touch-readout span {
+  display: block;
 }
 
 .status-pill {
@@ -879,8 +912,6 @@ td {
 }
 
 .mini-chart-panel canvas {
-  display: block;
-  width: 100%;
   height: 260px;
   margin-top: 12px;
 }
@@ -1104,6 +1135,14 @@ td {
   .chart-controls {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .chart-panel canvas {
+    height: 280px;
+  }
+
+  .mini-chart-panel canvas {
+    height: 240px;
   }
 
   .market-link-row {

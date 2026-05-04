@@ -37,6 +37,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - Analytics period selector: all trades, today, this week, this month, last 7/30/90 days, year to date, and custom dates
 - Additional analytics charts: period net P/L, pair net P/L, long-vs-short P/L, and R distribution
 - Hover summaries on analytics charts with order count, net P/L or trade count, and a short readout
+- iPhone-friendly analytics chart readouts: tap or drag charts to show the same short details without needing mouse hover
 - Setup leaderboard, session edge, and mistake cost analysis
 - Report-style analytics based on the MT/Pepperstone report structure: Summary, Profit & Loss, Long & Short, Symbols, and Risks
 - Market tools with Pepperstone and TradingView links
