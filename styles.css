@@ -751,6 +751,31 @@ td {
   overflow: visible;
 }
 
+.chart-hit-layer {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.chart-hit-zone {
+  position: absolute;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: transparent;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(15, 118, 110, 0.14);
+}
+
+.chart-hit-zone:focus-visible {
+  outline: 3px solid rgba(15, 118, 110, 0.3);
+  outline-offset: 2px;
+}
+
 .chart-panel canvas,
 .mini-chart-panel canvas {
   display: block;
@@ -1142,7 +1167,12 @@ td {
   }
 
   .mini-chart-panel canvas {
-    height: 240px;
+    height: 300px;
+  }
+
+  .chart-touch-readout {
+    font-size: 0.94rem;
+    padding: 12px;
   }
 
   .market-link-row {

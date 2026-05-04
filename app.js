@@ -1681,6 +1681,128 @@ function positionFloatingTooltip(tooltip, clientX, clientY) {
   tooltip.style.top = `${safeY}px`;
 }
 
+function isCompactChart(width = window.innerWidth) {
+  return width < 560;
+}
+
+function compactChartLabel(label) {
+  const text = String(label || "");
+  const dateMatch = text.match(/^([A-Z][a-z]{2})\s+(\d{1,2}),/);
+  if (dateMatch) return `${dateMatch[1]} ${dateMatch[2]}`;
+  if (text.includes("/")) return text.replace("/", "");
+  return text.length > 9 ? `${text.slice(0, 8)}...` : text;
+}
+
+function drawCanvasLabel(context, text, x, y, options = {}) {
+  const label = String(text || "");
+  if (!label) return;
+  const paddingX = options.paddingX ?? 5;
+  const paddingY = options.paddingY ?? 3;
+  const metrics = context.measureText(label);
+  const width = metrics.width + paddingX * 2;
+  const height = options.height ?? 20;
+  const left = x - width / 2;
+  const top = y - height + 4;
+  context.fillStyle = options.background || "rgba(253, 252, 248, 0.86)";
+  context.fillRect(left, top, width, height);
+  context.fillStyle = options.color || "#1f2826";
+  context.fillText(label, x, y);
+}
+
+function ensureChartHitLayer(canvas) {
+  const wrap = canvas.closest(".chart-wrap");
+  if (!wrap) return null;
+  let layer = wrap.querySelector(`.chart-hit-layer[data-chart="${canvas.id}"]`);
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.className = "chart-hit-layer";
+    layer.dataset.chart = canvas.id;
+    canvas.insertAdjacentElement("afterend", layer);
+  }
+
+  layer.innerHTML = "";
+  layer.style.left = `${canvas.offsetLeft}px`;
+  layer.style.top = `${canvas.offsetTop}px`;
+  layer.style.width = `${canvas.clientWidth}px`;
+  layer.style.height = `${canvas.clientHeight}px`;
+  return layer;
+}
+
+function clearChartHitLayer(chartId) {
+  const canvas = $(`#${chartId}`);
+  const layer = canvas?.closest(".chart-wrap")?.querySelector(`.chart-hit-layer[data-chart="${chartId}"]`);
+  if (layer) layer.innerHTML = "";
+}
+
+function makeHitButton(label, zone, onPick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "chart-hit-zone";
+  button.setAttribute("aria-label", label);
+  button.style.left = `${zone.left}px`;
+  button.style.top = `${zone.top}px`;
+  button.style.width = `${zone.width}px`;
+  button.style.height = `${zone.height}px`;
+  const pick = (event) => {
+    const point = eventClientPoint(event);
+    onPick(point, event);
+  };
+  button.addEventListener("pointerdown", pick);
+  button.addEventListener("click", pick);
+  button.addEventListener("focus", (event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    onPick({ clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }, event);
+  });
+  return button;
+}
+
+function installBarHitZones(canvas, bars, options) {
+  const layer = ensureChartHitLayer(canvas);
+  if (!layer) return;
+  bars.forEach((bar) => {
+    const zone = bar.zone || {
+      left: Math.max(bar.x - 16, 0),
+      top: Math.max(bar.y - 24, 0),
+      width: Math.max(bar.width + 32, 44),
+      height: Math.max(bar.height + 48, 44)
+    };
+    const button = makeHitButton(`Show ${bar.label} chart details`, zone, (point, event) => {
+      showBarDetail(canvas, bar, point.clientX, point.clientY, isTouchLikeEvent(event));
+    });
+    layer.appendChild(button);
+  });
+
+  const defaultBar = bars.reduce((best, bar) => (Math.abs(bar.value) > Math.abs(best?.value || 0) ? bar : best), bars[0] || null);
+  if (defaultBar) {
+    const summary = barSummary(defaultBar, options);
+    setChartReadout(canvas.id, defaultBar.label, summary.lines);
+  }
+}
+
+function installEquityHitZones(canvas, points) {
+  const layer = ensureChartHitLayer(canvas);
+  if (!layer) return;
+  points.forEach((point) => {
+    const size = 56;
+    const zone = {
+      left: Math.max(point.x - size / 2, 0),
+      top: Math.max(point.y - size / 2, 0),
+      width: size,
+      height: size
+    };
+    const button = makeHitButton(`Show ${point.label} curve details`, zone, (eventPoint, event) => {
+      showEquityDetail(point, eventPoint.clientX, eventPoint.clientY, isTouchLikeEvent(event));
+    });
+    layer.appendChild(button);
+  });
+
+  const lastPoint = points[points.length - 1];
+  if (lastPoint) {
+    const summary = equitySummary(lastPoint);
+    setChartReadout("equityChart", lastPoint.label, summary.lines);
+  }
+}
+
 function drawEquityChart(equity, period = "day") {
   const canvas = $("#equityChart");
   const context = canvas.getContext("2d");
@@ -1695,7 +1817,10 @@ function drawEquityChart(equity, period = "day") {
   context.fillStyle = "#fffefb";
   context.fillRect(0, 0, width, height);
 
-  const padding = { top: 24, right: 24, bottom: 34, left: 46 };
+  const compact = isCompactChart(width);
+  const padding = compact
+    ? { top: 30, right: 16, bottom: 50, left: 36 }
+    : { top: 24, right: 24, bottom: 34, left: 46 };
   const chartData = [
     { label: "Start", value: 0, periodR: 0, count: 0, key: "" },
     ...equity.map((point) => ({
@@ -1708,6 +1833,7 @@ function drawEquityChart(equity, period = "day") {
 
   if (values.length < 2) {
     equityChartState = { points: [] };
+    clearChartHitLayer("equityChart");
     hideEquityTooltip();
     context.fillStyle = "#69736f";
     context.font = "14px Segoe UI, sans-serif";
@@ -1770,11 +1896,12 @@ function drawEquityChart(equity, period = "day") {
   });
 
   context.fillStyle = "#69736f";
-  context.font = "12px Segoe UI, sans-serif";
+  context.font = compact ? "700 13px Segoe UI, sans-serif" : "12px Segoe UI, sans-serif";
   context.fillText(formatR(yMax), 10, padding.top + 4);
   context.fillText(formatR(yMin), 10, height - padding.bottom);
   drawChartLabels(context, points, labels, height);
   equityChartState = { points, period, width, height };
+  installEquityHitZones(canvas, points);
 }
 
 function drawChartFrame(context, width, height, padding) {
@@ -1785,12 +1912,15 @@ function drawChartFrame(context, width, height, padding) {
 
 function drawChartLabels(context, points, labels, height) {
   if (!points.length) return;
-  const indexes = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
+  const compact = isCompactChart(points[points.length - 1]?.x || 0);
+  const indexes = compact
+    ? [...new Set([0, points.length - 1])]
+    : [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
   context.fillStyle = "#69736f";
-  context.font = "12px Segoe UI, sans-serif";
+  context.font = compact ? "700 13px Segoe UI, sans-serif" : "12px Segoe UI, sans-serif";
   indexes.forEach((index) => {
     const point = points[index];
-    const label = labels[index] || "";
+    const label = compact ? compactChartLabel(labels[index]) : labels[index] || "";
     context.textAlign = index === 0 ? "left" : index === points.length - 1 ? "right" : "center";
     context.fillText(label, point.x, height - 10);
   });
@@ -1910,14 +2040,18 @@ function drawBarChart(canvasId, data, options = {}) {
   const cleanData = data.filter((item) => item && item.label);
   if (!cleanData.length || cleanData.every((item) => toNumber(item.value) === 0)) {
     barChartStates[canvasId] = { bars: [], options };
+    clearChartHitLayer(canvasId);
     resetChartReadout(canvasId, options.empty || "No data yet");
     context.fillStyle = "#69736f";
-    context.font = "14px Segoe UI, sans-serif";
+    context.font = "700 15px Segoe UI, sans-serif";
     context.fillText(options.empty || "No data yet", 18, height / 2);
     return;
   }
 
-  const padding = { top: 24, right: 18, bottom: 54, left: 54 };
+  const compact = isCompactChart(width);
+  const padding = compact
+    ? { top: 36, right: 12, bottom: 76, left: 34 }
+    : { top: 24, right: 18, bottom: 54, left: 54 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const values = cleanData.map((item) => toNumber(item.value));
@@ -1925,8 +2059,8 @@ function drawBarChart(canvasId, data, options = {}) {
   const maxValue = Math.max(0, ...values);
   const range = Math.max(maxValue - minValue, 1);
   const baseline = padding.top + chartHeight - ((0 - minValue) / range) * chartHeight;
-  const barGap = 8;
-  const barWidth = Math.max((chartWidth - barGap * (cleanData.length - 1)) / cleanData.length, 8);
+  const slotWidth = chartWidth / cleanData.length;
+  const barWidth = Math.max(Math.min(slotWidth * 0.68, compact ? 72 : 92), Math.min(slotWidth * 0.82, 10));
   const bars = [];
 
   context.strokeStyle = "#d9ded7";
@@ -1938,7 +2072,8 @@ function drawBarChart(canvasId, data, options = {}) {
 
   cleanData.forEach((item, index) => {
     const value = toNumber(item.value);
-    const x = padding.left + index * (barWidth + barGap);
+    const slotLeft = padding.left + index * slotWidth;
+    const x = slotLeft + (slotWidth - barWidth) / 2;
     const y = padding.top + chartHeight - ((value - minValue) / range) * chartHeight;
     const top = Math.min(y, baseline);
     const barHeight = Math.max(Math.abs(baseline - y), 2);
@@ -1954,71 +2089,112 @@ function drawBarChart(canvasId, data, options = {}) {
       value,
       count: item.count ?? item.value ?? 0,
       detail: item.detail || "",
+      zone: {
+        left: Math.max(slotLeft, 0),
+        top: Math.max(padding.top - 18, 0),
+        width: Math.max(slotWidth, 44),
+        height: chartHeight + padding.bottom + 14
+      },
       raw: item
     });
 
     context.fillStyle = "#1f2826";
-    context.font = "11px Segoe UI, sans-serif";
+    context.font = compact ? "800 13px Segoe UI, sans-serif" : "11px Segoe UI, sans-serif";
     context.textAlign = "center";
     const valueText = options.formatter ? options.formatter(value) : numberFormatter.format(value);
-    context.fillText(valueText, x + barWidth / 2, Math.max(top - 6, 12));
+    const shouldDrawValue = !compact || cleanData.length <= 6 || index % 2 === 0;
+    if (shouldDrawValue) {
+      drawCanvasLabel(context, valueText, x + barWidth / 2, Math.max(top - 7, 18), {
+        height: compact ? 22 : 18,
+        color: "#1f2826"
+      });
+    }
 
     context.fillStyle = "#69736f";
-    const label = String(item.label).length > 10 ? `${String(item.label).slice(0, 9)}...` : String(item.label);
-    context.fillText(label, x + barWidth / 2, height - 20);
+    context.font = compact ? "800 13px Segoe UI, sans-serif" : "11px Segoe UI, sans-serif";
+    const label = compact ? compactChartLabel(item.label) : String(item.label).length > 10 ? `${String(item.label).slice(0, 9)}...` : String(item.label);
+    const shouldDrawLabel = !compact || cleanData.length <= 6 || index % 2 === 0;
+    if (shouldDrawLabel) context.fillText(label, x + barWidth / 2, height - 28);
   });
 
   context.textAlign = "left";
   barChartStates[canvasId] = { bars, options };
+  installBarHitZones(canvas, bars, options);
 }
 
-function handleBarChartPointerMove(event) {
-  const canvas = event.currentTarget;
-  const state = barChartStates[canvas.id];
-  const tooltip = $("#barChartTooltip");
-  if (!state || !state.bars.length || !tooltip) return;
-
-  const point = eventClientPoint(event);
-  if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = point.clientX - rect.left;
-  const y = point.clientY - rect.top;
-  const bar = state.bars.find((item) => {
-    const withinX = x >= item.x - 4 && x <= item.x + item.width + 4;
-    const withinY = y >= Math.min(item.y, item.y + item.height) - 18 && y <= Math.max(item.y, item.y + item.height) + 18;
-    return withinX && withinY;
-  });
-
-  if (!bar) {
-    if (!isTouchLikeEvent(event)) hideBarChartTooltip();
-    return;
-  }
-
-  const formatter = state.options.formatter || ((value) => numberFormatter.format(value));
+function barSummary(bar, options = {}) {
+  const formatter = options.formatter || ((value) => numberFormatter.format(value));
   const valueText = formatter(bar.value);
   const conclusion =
-    state.options.colorMode === "count"
+    options.colorMode === "count"
       ? "Distribution bucket for reviewing outcome quality."
       : bar.value > 0
         ? "Positive contribution in the selected period."
         : bar.value < 0
           ? "Negative contribution; review entries, exits, and mistakes."
           : "Flat contribution.";
+  return {
+    valueText,
+    conclusion,
+    lines: [
+      `${options.valueLabel || "Value"}: ${valueText}`,
+      bar.detail || `${numberFormatter.format(bar.count)} orders`,
+      conclusion
+    ]
+  };
+}
+
+function showBarDetail(canvas, bar, clientX, clientY, persist = false) {
+  const state = barChartStates[canvas.id];
+  const tooltip = $("#barChartTooltip");
+  if (!state || !tooltip) return;
+  const summary = barSummary(bar, state.options);
 
   tooltip.innerHTML = `
     <strong>${escapeHtml(bar.label)}</strong>
-    <p>${escapeHtml(state.options.valueLabel || "Value")}: ${escapeHtml(valueText)}</p>
-    <p>${escapeHtml(bar.detail || `${numberFormatter.format(bar.count)} orders`)}</p>
-    <p>${escapeHtml(conclusion)}</p>
+    <p>${escapeHtml(summary.lines[0])}</p>
+    <p>${escapeHtml(summary.lines[1])}</p>
+    <p>${escapeHtml(summary.conclusion)}</p>
   `;
-  setChartReadout(canvas.id, bar.label, [
-    `${state.options.valueLabel || "Value"}: ${valueText}`,
-    bar.detail || `${numberFormatter.format(bar.count)} orders`,
-    conclusion
-  ]);
-  positionFloatingTooltip(tooltip, point.clientX, point.clientY);
+  setChartReadout(canvas.id, bar.label, summary.lines);
+  positionFloatingTooltip(tooltip, clientX, clientY);
   tooltip.classList.add("visible");
-  if (isTouchLikeEvent(event)) scheduleTouchTooltipHide();
+  if (persist) scheduleTouchTooltipHide();
+}
+
+function findBarFromPoint(state, x, y) {
+  const zoneMatch = state.bars.find((item) => {
+    const zone = item.zone;
+    if (!zone) return false;
+    return x >= zone.left && x <= zone.left + zone.width && y >= zone.top && y <= zone.top + zone.height;
+  });
+  if (zoneMatch) return zoneMatch;
+
+  return state.bars.reduce((best, item) => {
+    const centerX = item.x + item.width / 2;
+    const distance = Math.abs(centerX - x);
+    return distance < best.distance ? { bar: item, distance } : best;
+  }, { bar: null, distance: Infinity }).bar;
+}
+
+function handleBarChartPointerMove(event) {
+  const canvas = event.currentTarget;
+  const state = barChartStates[canvas.id];
+  if (!state || !state.bars.length) return;
+
+  const point = eventClientPoint(event);
+  if (!Number.isFinite(point.clientX) || !Number.isFinite(point.clientY)) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = point.clientX - rect.left;
+  const y = point.clientY - rect.top;
+  const bar = findBarFromPoint(state, x, y);
+
+  if (!bar) {
+    if (!isTouchLikeEvent(event)) hideBarChartTooltip();
+    return;
+  }
+
+  showBarDetail(canvas, bar, point.clientX, point.clientY, isTouchLikeEvent(event));
 }
 
 function hideBarChartTooltip() {
@@ -2031,10 +2207,52 @@ function handleBarChartPointerLeave(event) {
   hideBarChartTooltip();
 }
 
-function handleEquityPointerMove(event) {
+function equitySummary(point) {
+  const periodR = toNumber(point.periodR);
+  const conclusion =
+    point.count === 0
+      ? "Starting point before recorded trades."
+      : periodR > 0
+        ? "Positive period; execution added edge."
+        : periodR < 0
+          ? "Negative period; review mistakes and setup quality."
+          : "Flat period; no net R change.";
+  return {
+    conclusion,
+    lines: [
+      `${point.count || 0} trades, ${formatR(periodR)} this ${equityChartState.period}`,
+      `Cumulative ${formatR(point.value)}`,
+      conclusion
+    ]
+  };
+}
+
+function showEquityDetail(point, clientX, clientY, persist = false) {
   const canvas = $("#equityChart");
   const tooltip = $("#equityTooltip");
-  if (!canvas || !tooltip || !equityChartState.points.length) return;
+  if (!canvas || !tooltip) return;
+  const rect = canvas.getBoundingClientRect();
+  const summary = equitySummary(point);
+
+  tooltip.innerHTML = `
+    <strong>${escapeHtml(point.label)}</strong>
+    <p>${escapeHtml(summary.lines[0])}</p>
+    <p>${escapeHtml(summary.lines[1])}. ${escapeHtml(summary.conclusion)}</p>
+  `;
+  setChartReadout("equityChart", point.label, summary.lines);
+
+  const horizontalEdge = Math.min(110, rect.width / 2);
+  const tooltipX = Math.min(Math.max(point.x, horizontalEdge), rect.width - horizontalEdge);
+  const tooltipY = Math.max(point.y, 145);
+  tooltip.style.left = `${tooltipX}px`;
+  tooltip.style.top = `${tooltipY}px`;
+  tooltip.classList.add("visible");
+  if (persist) scheduleTouchTooltipHide();
+}
+
+function handleEquityPointerMove(event) {
+  const canvas = $("#equityChart");
+  if (!canvas || !equityChartState.points.length) return;
 
   const eventPoint = eventClientPoint(event);
   if (!Number.isFinite(eventPoint.clientX) || !Number.isFinite(eventPoint.clientY)) return;
@@ -2046,40 +2264,13 @@ function handleEquityPointerMove(event) {
     return distance < best.distance ? { point, distance } : best;
   }, { point: null, distance: Infinity });
 
-  if (!nearest.point || nearest.distance > 32) {
-    if (!isTouchLikeEvent(event)) hideEquityTooltip();
+  const touchLike = isTouchLikeEvent(event);
+  if (!nearest.point || (!touchLike && nearest.distance > 44)) {
+    if (!touchLike) hideEquityTooltip();
     return;
   }
 
-  const point = nearest.point;
-  const periodR = toNumber(point.periodR);
-  const conclusion =
-    point.count === 0
-      ? "Starting point before recorded trades."
-      : periodR > 0
-        ? "Positive period; execution added edge."
-        : periodR < 0
-          ? "Negative period; review mistakes and setup quality."
-          : "Flat period; no net R change.";
-
-  tooltip.innerHTML = `
-    <strong>${escapeHtml(point.label)}</strong>
-    <p>${point.count || 0} trades, ${formatR(periodR)} this ${equityChartState.period}.</p>
-    <p>Cumulative ${formatR(point.value)}. ${escapeHtml(conclusion)}</p>
-  `;
-  setChartReadout("equityChart", point.label, [
-    `${point.count || 0} trades, ${formatR(periodR)} this ${equityChartState.period}`,
-    `Cumulative ${formatR(point.value)}`,
-    conclusion
-  ]);
-
-  const horizontalEdge = Math.min(110, rect.width / 2);
-  const tooltipX = Math.min(Math.max(point.x, horizontalEdge), rect.width - horizontalEdge);
-  const tooltipY = Math.max(point.y, 145);
-  tooltip.style.left = `${tooltipX}px`;
-  tooltip.style.top = `${tooltipY}px`;
-  tooltip.classList.add("visible");
-  if (isTouchLikeEvent(event)) scheduleTouchTooltipHide();
+  showEquityDetail(nearest.point, eventPoint.clientX, eventPoint.clientY, touchLike);
 }
 
 function hideEquityTooltip() {
