@@ -1828,6 +1828,105 @@ function clearChartHitLayer(chartId) {
   if (layer) layer.innerHTML = "";
 }
 
+function ensureChartLabelLayer(canvas) {
+  const wrap = canvas.closest(".chart-wrap");
+  if (!wrap) return null;
+  let layer = wrap.querySelector(`.chart-label-layer[data-chart="${canvas.id}"]`);
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.className = "chart-label-layer";
+    layer.dataset.chart = canvas.id;
+    canvas.insertAdjacentElement("afterend", layer);
+  }
+
+  layer.innerHTML = "";
+  layer.style.left = `${canvas.offsetLeft}px`;
+  layer.style.top = `${canvas.offsetTop}px`;
+  layer.style.width = `${canvas.clientWidth}px`;
+  layer.style.height = `${canvas.clientHeight}px`;
+  return layer;
+}
+
+function clearChartLabelLayer(chartId) {
+  const canvas = $(`#${chartId}`);
+  const layer = canvas?.closest(".chart-wrap")?.querySelector(`.chart-label-layer[data-chart="${chartId}"]`);
+  if (layer) layer.innerHTML = "";
+}
+
+function chartPixelScales(canvas, width, height) {
+  return {
+    x: canvas.clientWidth / Math.max(width, 1),
+    y: canvas.clientHeight / Math.max(height, 1)
+  };
+}
+
+function appendChartLabel(layer, text, x, y, className = "") {
+  if (!layer || !text) return;
+  const label = document.createElement("span");
+  label.className = `chart-dom-label ${className}`.trim();
+  label.textContent = text;
+  label.style.left = `${x}px`;
+  label.style.top = `${y}px`;
+  layer.appendChild(label);
+}
+
+function renderEquityDomLabels(canvas, points, labels, dimensions) {
+  const layer = ensureChartLabelLayer(canvas);
+  if (!layer) return;
+  const { width, height, padding, yMax, yMin, compact } = dimensions;
+  const scale = chartPixelScales(canvas, width, height);
+  const scaledX = (value) => value * scale.x;
+  const scaledY = (value) => value * scale.y;
+  const xMax = canvas.clientWidth - 20;
+
+  appendChartLabel(layer, formatR(yMax), clamp(scaledX(padding.left), 20, xMax), scaledY(padding.top + 4), "axis");
+  appendChartLabel(layer, formatR(yMin), clamp(scaledX(padding.left), 20, xMax), scaledY(height - padding.bottom + 2), "axis");
+
+  const indexes = compact
+    ? [...new Set([0, points.length - 1])]
+    : [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])];
+
+  indexes.forEach((index) => {
+    const point = points[index];
+    const text = compact ? compactChartLabel(labels[index]) : labels[index] || "";
+    appendChartLabel(layer, text, clamp(scaledX(point.x), 24, xMax), scaledY(height - 14), "axis");
+  });
+}
+
+function renderBarDomLabels(canvas, bars, options, dimensions) {
+  const layer = ensureChartLabelLayer(canvas);
+  if (!layer) return;
+  const { width, height, padding, compact } = dimensions;
+  const scale = chartPixelScales(canvas, width, height);
+  const maxX = canvas.clientWidth - 20;
+  const shouldShowAll = !compact || bars.length <= 8;
+
+  bars.forEach((bar, index) => {
+    const x = clamp((bar.x + bar.width / 2) * scale.x, 20, maxX);
+    const value = toNumber(bar.value);
+    const isCount = options.colorMode === "count";
+
+    if (value !== 0 && shouldShowAll) {
+      const valueText = options.formatter ? options.formatter(value) : numberFormatter.format(value);
+      const rawValueY = value >= 0
+        ? Math.max(bar.y - 12, 22)
+        : Math.min(bar.y + 20, height - padding.bottom - 8);
+      const insideBar = value < 0 && rawValueY >= bar.y && rawValueY <= bar.y + bar.height;
+      const valueClass = [
+        "value",
+        isCount ? "count" : value >= 0 ? "positive" : "negative",
+        insideBar ? "inside-bar" : ""
+      ].filter(Boolean).join(" ");
+      appendChartLabel(layer, valueText, x, rawValueY * scale.y, valueClass);
+    }
+
+    if (shouldShowAll) {
+      const text = compact ? compactChartLabel(bar.label) : String(bar.label).length > 10 ? `${String(bar.label).slice(0, 9)}...` : String(bar.label);
+      appendChartLabel(layer, text, x, (height - 30) * scale.y, "axis");
+    }
+  });
+}
+
 function makeHitButton(label, zone, onPick) {
   const button = document.createElement("button");
   button.type = "button";
@@ -1931,6 +2030,7 @@ function drawEquityChart(equity, period = "day") {
   if (values.length < 2) {
     equityChartState = { points: [] };
     clearChartHitLayer("equityChart");
+    clearChartLabelLayer("equityChart");
     hideEquityTooltip();
     context.fillStyle = "#69736f";
     context.font = "14px Segoe UI, sans-serif";
@@ -1992,18 +2092,8 @@ function drawEquityChart(equity, period = "day") {
     context.fill();
   });
 
-  context.font = compact ? "800 14px Segoe UI, sans-serif" : "700 12px Segoe UI, sans-serif";
-  context.textAlign = "left";
-  drawAxisText(context, formatR(yMax), padding.left, padding.top + 6, {
-    minX: 16,
-    maxX: width - 16
-  });
-  drawAxisText(context, formatR(yMin), padding.left, height - padding.bottom + 4, {
-    minX: 16,
-    maxX: width - 16
-  });
-  drawChartLabels(context, points, labels, height, width);
   equityChartState = { points, period, width, height };
+  renderEquityDomLabels(canvas, points, labels, { width, height, padding, yMax, yMin, compact });
   installEquityHitZones(canvas, points);
 }
 
@@ -2147,6 +2237,7 @@ function drawBarChart(canvasId, data, options = {}) {
   if (!cleanData.length || cleanData.every((item) => toNumber(item.value) === 0)) {
     barChartStates[canvasId] = { bars: [], options };
     clearChartHitLayer(canvasId);
+    clearChartLabelLayer(canvasId);
     resetChartReadout(canvasId, options.empty || "No data yet");
     context.fillStyle = "#69736f";
     context.font = "700 15px Segoe UI, sans-serif";
@@ -2204,40 +2295,12 @@ function drawBarChart(canvasId, data, options = {}) {
       raw: item
     });
 
-    context.fillStyle = "#1f2826";
-    context.font = compact ? "900 17px Segoe UI, sans-serif" : "800 13px Segoe UI, sans-serif";
     context.textAlign = "center";
-    const valueText = options.formatter ? options.formatter(value) : numberFormatter.format(value);
-    const shouldDrawValue = value !== 0 && (!compact || cleanData.length <= 8);
-    if (shouldDrawValue) {
-      const labelY = value >= 0 ? Math.max(top - 12, 22) : Math.min(top + 20, height - padding.bottom - 8);
-      const insideBar = value < 0 && labelY >= top && labelY <= top + barHeight;
-      drawModernValueLabel(context, valueText, x + barWidth / 2, labelY, {
-        color: insideBar ? "#ffffff" : "#1f2826",
-        outline: insideBar ? "rgba(31, 40, 38, 0.42)" : "rgba(255, 255, 255, 0.98)",
-        outlineWidth: compact ? 7 : 5,
-        shadowBlur: compact ? 7 : 4,
-        shadowColor: insideBar ? "rgba(31, 40, 38, 0.3)" : "rgba(31, 40, 38, 0.2)",
-        minX: 18,
-        maxX: width - 18
-      });
-    }
-
-    context.font = compact ? "900 14px Segoe UI, sans-serif" : "800 12px Segoe UI, sans-serif";
-    const label = compact ? compactChartLabel(item.label) : String(item.label).length > 10 ? `${String(item.label).slice(0, 9)}...` : String(item.label);
-    const shouldDrawLabel = !compact || cleanData.length <= 8;
-    if (shouldDrawLabel) {
-      drawAxisText(context, label, x + barWidth / 2, height - 30, {
-        minX: 16,
-        maxX: width - 16,
-        outlineWidth: compact ? 6 : 5,
-        shadowBlur: 2
-      });
-    }
   });
 
   context.textAlign = "left";
   barChartStates[canvasId] = { bars, options };
+  renderBarDomLabels(canvas, bars, options, { width, height, padding, compact });
   installBarHitZones(canvas, bars, options);
 }
 
