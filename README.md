@@ -4,7 +4,7 @@ An offline-first FX trading journal for recording trades, reviewing performance,
 
 ## Run
 
-Open `index.html` in a browser. The app stores trades and strategies in browser `localStorage`.
+Open `index.html` in a browser. The app stores account profiles, trades, strategies, custom pairs, and settings in browser `localStorage`.
 
 ## Use On iPhone
 
@@ -39,6 +39,7 @@ A permanent setup should use an HTTPS host such as GitHub Pages, Netlify, or Ver
 - Report-style analytics based on the MT/Pepperstone report structure: Summary, Profit & Loss, Long & Short, Symbols, and Risks
 - Market tools with Pepperstone and TradingView links
 - Sidebar TradingView mini symbol chart, defaulting to Pepperstone XAU/USD, with changeable pair and range controls
+- Local account profiles with password-gated sign in, account switching, and separated trades, strategies, custom pairs, and settings per account
 
 ## Market Chart Notes
 
@@ -55,3 +56,7 @@ Target RR = movement from entry to target divided by movement from entry to stop
 USD P/L = price movement x lot size x contract size x quote-to-USD rate.
 
 For EUR/USD, GBP/USD, AUD/USD, and XAU/USD, quote-to-USD is `1`. For USD/JPY, the app can estimate using price. For cross pairs such as GBP/JPY, enter the quote-to-USD rate when you want exact dollar P/L.
+
+## Account Notes
+
+Accounts are local profiles for this browser/device. Passwords are stored as salted hashes when Web Crypto is available, but a static offline app cannot provide the same protection as a server-backed login system. Use the feature for separation and privacy on your device, not for high-security data protection.

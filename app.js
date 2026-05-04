@@ -2,7 +2,10 @@ const storageKeys = {
   trades: "fx-edge-journal.trades.v1",
   strategies: "fx-edge-journal.strategies.v1",
   customPairs: "fx-edge-journal.custom-pairs.v1",
-  settings: "fx-edge-journal.settings.v1"
+  settings: "fx-edge-journal.settings.v1",
+  accounts: "fx-edge-journal.accounts.v1",
+  activeAccount: "fx-edge-journal.active-account.v1",
+  legacyMigrated: "fx-edge-journal.legacy-migrated.v1"
 };
 
 const defaultPair = "XAU/USD";
@@ -222,31 +225,19 @@ const demoTrades = [
   }
 ];
 
-const storedCustomPairs = loadFromStorage(storageKeys.customPairs, []);
-let customPairs = Array.isArray(storedCustomPairs)
-  ? storedCustomPairs.map((pair) => ({
-      symbol: normalizePair(pair.symbol),
-      contractSize: toNumber(pair.contractSize, 1)
-    })).filter((pair) => pair.symbol && pair.contractSize > 0)
-  : [];
-const settings = {
+const defaultSettings = {
   startingBalance: 1000,
-  commissionPerLot: 7,
-  ...loadFromStorage(storageKeys.settings, {})
+  commissionPerLot: 7
 };
-analyticsRange = settings.analyticsRange || analyticsRange;
-analyticsCustomStart = settings.analyticsCustomStart || analyticsCustomStart;
-analyticsCustomEnd = settings.analyticsCustomEnd || analyticsCustomEnd;
-marketChartPair = settings.marketChartPair || marketChartPair;
-marketChartInterval = settings.marketChartInterval || marketChartInterval;
-if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
 
-const storedTrades = loadFromStorage(storageKeys.trades, []);
-if (Array.isArray(storedTrades)) {
-  storedTrades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
-}
-let trades = Array.isArray(storedTrades) ? storedTrades.map(withCalculatedTrade) : [];
-let strategies = loadFromStorage(storageKeys.strategies, []);
+let accounts = loadFromStorage(storageKeys.accounts, []);
+if (!Array.isArray(accounts)) accounts = [];
+accounts = accounts.filter((account) => account?.id && account?.name && account?.salt && account?.passwordHash);
+let activeAccount = null;
+let customPairs = [];
+let settings = { ...defaultSettings };
+let trades = [];
+let strategies = [];
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -274,20 +265,365 @@ function loadFromStorage(key, fallback) {
   }
 }
 
+function accountScopedKey(key, accountId = activeAccount?.id) {
+  if (!accountId) return key;
+  const suffix = key.replace("fx-edge-journal.", "");
+  return `fx-edge-journal.account.${accountId}.${suffix}`;
+}
+
+function saveAccounts() {
+  localStorage.setItem(storageKeys.accounts, JSON.stringify(accounts));
+}
+
+function loadAccountData() {
+  const storedCustomPairs = loadFromStorage(accountScopedKey(storageKeys.customPairs), []);
+  customPairs = Array.isArray(storedCustomPairs)
+    ? storedCustomPairs
+        .map((pair) => ({
+          symbol: normalizePair(pair.symbol),
+          contractSize: toNumber(pair.contractSize, 1)
+        }))
+        .filter((pair) => pair.symbol && pair.contractSize > 0)
+    : [];
+
+  settings = {
+    ...defaultSettings,
+    ...loadFromStorage(accountScopedKey(storageKeys.settings), {})
+  };
+  analyticsRange = settings.analyticsRange || "all";
+  analyticsCustomStart = settings.analyticsCustomStart || "";
+  analyticsCustomEnd = settings.analyticsCustomEnd || "";
+  marketChartPair = settings.marketChartPair || defaultPair;
+  marketChartInterval = settings.marketChartInterval || "1D";
+  if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
+
+  const storedTrades = loadFromStorage(accountScopedKey(storageKeys.trades), []);
+  if (Array.isArray(storedTrades)) {
+    storedTrades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
+  }
+  trades = Array.isArray(storedTrades) ? storedTrades.map(withCalculatedTrade) : [];
+  strategies = loadFromStorage(accountScopedKey(storageKeys.strategies), []);
+  if (!Array.isArray(strategies)) strategies = [];
+}
+
+function resetAppData() {
+  customPairs = [];
+  settings = { ...defaultSettings };
+  trades = [];
+  strategies = [];
+  analyticsRange = "all";
+  analyticsCustomStart = "";
+  analyticsCustomEnd = "";
+  marketChartPair = defaultPair;
+  marketChartInterval = "1D";
+}
+
+function hasLegacyData() {
+  return [storageKeys.trades, storageKeys.strategies, storageKeys.customPairs, storageKeys.settings]
+    .some((key) => Boolean(localStorage.getItem(key)));
+}
+
+function migrateLegacyDataToAccount(accountId) {
+  if (!accountId || !hasLegacyData()) return;
+  [storageKeys.trades, storageKeys.strategies, storageKeys.customPairs, storageKeys.settings].forEach((key) => {
+    const legacy = localStorage.getItem(key);
+    const scoped = accountScopedKey(key, accountId);
+    if (legacy && !localStorage.getItem(scoped)) {
+      localStorage.setItem(scoped, legacy);
+    }
+  });
+  localStorage.setItem(storageKeys.legacyMigrated, accountId);
+}
+
 function saveTrades() {
-  localStorage.setItem(storageKeys.trades, JSON.stringify(trades));
+  localStorage.setItem(accountScopedKey(storageKeys.trades), JSON.stringify(trades));
 }
 
 function saveStrategies() {
-  localStorage.setItem(storageKeys.strategies, JSON.stringify(strategies));
+  localStorage.setItem(accountScopedKey(storageKeys.strategies), JSON.stringify(strategies));
 }
 
 function saveCustomPairs() {
-  localStorage.setItem(storageKeys.customPairs, JSON.stringify(customPairs));
+  localStorage.setItem(accountScopedKey(storageKeys.customPairs), JSON.stringify(customPairs));
 }
 
 function saveSettings() {
-  localStorage.setItem(storageKeys.settings, JSON.stringify(settings));
+  localStorage.setItem(accountScopedKey(storageKeys.settings), JSON.stringify(settings));
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function fallbackHash(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fallback-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function randomId(prefix = "acct") {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function randomSalt() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    return bytesToHex(bytes);
+  }
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+}
+
+async function hashPassword(password, salt, algorithm = "auto") {
+  const value = `${salt}:${password}`;
+  if (algorithm === "fallback") return fallbackHash(value);
+  try {
+    if (globalThis.crypto?.subtle && globalThis.TextEncoder) {
+      const data = new TextEncoder().encode(value);
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+      const hex = bytesToHex(new Uint8Array(digest));
+      return algorithm === "legacy-sha256" ? hex : `sha256-${hex}`;
+    }
+  } catch (error) {
+    // Local file origins can block Web Crypto in some browsers.
+  }
+  return fallbackHash(value);
+}
+
+async function hashPasswordForAccount(password, account) {
+  const storedHash = String(account.passwordHash || "");
+  if (storedHash.startsWith("fallback-")) return hashPassword(password, account.salt, "fallback");
+  if (storedHash.startsWith("sha256-")) return hashPassword(password, account.salt, "sha256");
+  return hashPassword(password, account.salt, "legacy-sha256");
+}
+
+function timingSafeEqual(left, right) {
+  const a = String(left || "");
+  const b = String(right || "");
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let index = 0; index < a.length; index += 1) {
+    result |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  }
+  return result === 0;
+}
+
+function cleanAccountName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function accountById(id) {
+  return accounts.find((account) => account.id === id);
+}
+
+function accountByName(name) {
+  const normalized = cleanAccountName(name).toLowerCase();
+  return accounts.find((account) => cleanAccountName(account.name).toLowerCase() === normalized);
+}
+
+function safeSessionGet(key) {
+  try {
+    return sessionStorage.getItem(key);
+  } catch (error) {
+    return "";
+  }
+}
+
+function safeSessionSet(key, value) {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch (error) {
+    // Password entry still works for the current page when sessionStorage is blocked.
+  }
+}
+
+function safeSessionRemove(key) {
+  try {
+    sessionStorage.removeItem(key);
+  } catch (error) {
+    // Ignore blocked sessionStorage.
+  }
+}
+
+function syncAccountUi() {
+  const name = $("#activeAccountName");
+  if (name) name.textContent = activeAccount ? activeAccount.name : "Locked";
+  const logout = $("#logoutAccountBtn");
+  if (logout) logout.disabled = !activeAccount;
+}
+
+function populateAccountSelect() {
+  const select = $("#loginAccountSelect");
+  if (!select) return;
+  select.innerHTML = "";
+
+  if (!accounts.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Create an account first";
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+
+  select.disabled = false;
+  accounts.forEach((account) => {
+    const option = document.createElement("option");
+    option.value = account.id;
+    option.textContent = account.name;
+    select.appendChild(option);
+  });
+
+  const selectedId = activeAccount?.id || safeSessionGet(storageKeys.activeAccount) || accounts[0].id;
+  select.value = accountById(selectedId) ? selectedId : accounts[0].id;
+}
+
+function setAuthMode(mode = "login") {
+  const resolved = mode === "login" && !accounts.length ? "create" : mode;
+  $$(".auth-tabs .segment").forEach((button) => {
+    button.classList.toggle("active", button.dataset.authMode === resolved);
+  });
+  const loginForm = $("#loginForm");
+  const createForm = $("#createAccountForm");
+  if (loginForm) loginForm.classList.toggle("hidden", resolved !== "login");
+  if (createForm) createForm.classList.toggle("hidden", resolved !== "create");
+  const title = $("#authTitle");
+  if (title) title.textContent = resolved === "create" ? "Create Account" : "Open Account";
+}
+
+function showAuthOverlay(mode = "login", locked = !activeAccount) {
+  const overlay = $("#authOverlay");
+  if (!overlay) return;
+  populateAccountSelect();
+  setAuthMode(mode);
+  overlay.dataset.locked = locked ? "true" : "false";
+  overlay.classList.remove("hidden");
+  const close = $("#closeAuthBtn");
+  if (close) close.hidden = locked;
+
+  setTimeout(() => {
+    const target = overlay.querySelector(".auth-form:not(.hidden) input, .auth-form:not(.hidden) select");
+    if (target) target.focus();
+  }, 0);
+}
+
+function hideAuthOverlay() {
+  if (!activeAccount) return;
+  const overlay = $("#authOverlay");
+  if (overlay) overlay.classList.add("hidden");
+}
+
+function refreshAccountWorkspace() {
+  renderPairOptions(defaultPair);
+  renderMarketChartOptions(marketChartPair);
+  syncMarketChartControls();
+  resetTradeForm();
+  resetStrategyForm();
+  render();
+  renderTradingViewWidget();
+  syncAccountUi();
+}
+
+function setActiveAccount(account, message = "") {
+  activeAccount = account;
+  safeSessionSet(storageKeys.activeAccount, account.id);
+  loadAccountData();
+  refreshAccountWorkspace();
+  hideAuthOverlay();
+  if (message) showToast(message);
+}
+
+function lockAccount(showMessage = true) {
+  activeAccount = null;
+  safeSessionRemove(storageKeys.activeAccount);
+  resetAppData();
+  refreshAccountWorkspace();
+  showAuthOverlay(accounts.length ? "login" : "create", true);
+  if (showMessage) showToast("Account locked.");
+}
+
+function initAccountSession() {
+  const account = accountById(safeSessionGet(storageKeys.activeAccount));
+  if (account) {
+    activeAccount = account;
+    loadAccountData();
+  } else {
+    resetAppData();
+  }
+}
+
+async function handleCreateAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const name = cleanAccountName(form.elements.name.value);
+  const password = form.elements.password.value;
+  const confirmPassword = form.elements.confirm.value;
+
+  if (name.length < 2) {
+    showToast("Use a longer account name.");
+    return;
+  }
+
+  if (accountByName(name)) {
+    showToast("That account name already exists.");
+    return;
+  }
+
+  if (password.length < 4) {
+    showToast("Use at least 4 password characters.");
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    showToast("Passwords do not match.");
+    return;
+  }
+
+  const wasFirstAccount = accounts.length === 0;
+  const salt = randomSalt();
+  const account = {
+    id: randomId(),
+    name,
+    salt,
+    passwordHash: await hashPassword(password, salt),
+    createdAt: new Date().toISOString()
+  };
+
+  accounts = [...accounts, account];
+  saveAccounts();
+  if (wasFirstAccount && hasLegacyData()) migrateLegacyDataToAccount(account.id);
+  form.reset();
+  setActiveAccount(account, `Account ${name} is ready.`);
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const account = accountById(form.elements.accountId.value);
+  if (!account) {
+    showToast("Create an account first.");
+    setAuthMode("create");
+    return;
+  }
+
+  const hash = await hashPasswordForAccount(form.elements.password.value, account);
+  if (!timingSafeEqual(hash, account.passwordHash)) {
+    showToast("Password is not correct.");
+    form.elements.password.value = "";
+    form.elements.password.focus();
+    return;
+  }
+
+  form.reset();
+  setActiveAccount(account, `Signed in as ${account.name}.`);
 }
 
 function toNumber(value, fallback = 0) {
@@ -2181,6 +2517,36 @@ function showToast(message) {
 }
 
 function bindEvents() {
+  const switchAccountButton = $("#switchAccountBtn");
+  if (switchAccountButton) {
+    switchAccountButton.addEventListener("click", () => {
+      showAuthOverlay(accounts.length ? "login" : "create", false);
+    });
+  }
+
+  const logoutAccountButton = $("#logoutAccountBtn");
+  if (logoutAccountButton) logoutAccountButton.addEventListener("click", () => lockAccount());
+
+  const closeAuthButton = $("#closeAuthBtn");
+  if (closeAuthButton) closeAuthButton.addEventListener("click", hideAuthOverlay);
+
+  $$(".auth-tabs .segment").forEach((button) => {
+    button.addEventListener("click", () => setAuthMode(button.dataset.authMode));
+  });
+
+  const loginForm = $("#loginForm");
+  if (loginForm) loginForm.addEventListener("submit", handleLogin);
+
+  const createAccountForm = $("#createAccountForm");
+  if (createAccountForm) createAccountForm.addEventListener("submit", handleCreateAccount);
+
+  const authOverlay = $("#authOverlay");
+  if (authOverlay) {
+    authOverlay.addEventListener("pointerdown", (event) => {
+      if (event.target === authOverlay && activeAccount) hideAuthOverlay();
+    });
+  }
+
   $$(".nav-tab").forEach((button) => {
     button.addEventListener("click", () => {
       $$(".nav-tab").forEach((tab) => tab.classList.remove("active"));
@@ -2197,6 +2563,7 @@ function bindEvents() {
       const button = event.target.closest(".segment");
       if (!button) return;
       if (button.dataset.period) return;
+      if (button.dataset.authMode) return;
       setSegment(root.dataset.field, button.dataset.value);
     });
   });
@@ -2426,12 +2793,17 @@ function bindEvents() {
 }
 
 function bootstrap() {
+  initAccountSession();
   renderPairOptions(defaultPair);
   renderMarketChartOptions(marketChartPair);
   bindEvents();
   resetTradeForm();
   render();
   renderTradingViewWidget();
+  syncAccountUi();
+  if (!activeAccount) {
+    showAuthOverlay(accounts.length ? "login" : "create", true);
+  }
   registerServiceWorker();
 }
 

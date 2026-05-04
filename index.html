@@ -24,6 +24,21 @@
         </div>
       </div>
 
+      <section class="account-panel" aria-label="Account profile">
+        <div>
+          <p class="eyebrow">Account</p>
+          <h2 id="activeAccountName">Locked</h2>
+        </div>
+        <div class="account-actions">
+          <button class="icon-button" type="button" id="switchAccountBtn" title="Switch account" aria-label="Switch account">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+          </button>
+          <button class="icon-button" type="button" id="logoutAccountBtn" title="Lock account" aria-label="Lock account">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 19V5a2 2 0 0 0-2-2h-4"/></svg>
+          </button>
+        </div>
+      </section>
+
       <nav class="nav-tabs" aria-label="Primary">
         <button class="nav-tab active" data-view="journal">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -712,6 +727,55 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <div class="auth-overlay hidden" id="authOverlay" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <section class="auth-card">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Local profiles</p>
+          <h2 id="authTitle">Open Account</h2>
+        </div>
+        <button class="icon-button" type="button" id="closeAuthBtn" title="Close" aria-label="Close account panel">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="auth-tabs segmented" aria-label="Account action">
+        <button class="segment active" type="button" data-auth-mode="login">Sign in</button>
+        <button class="segment" type="button" data-auth-mode="create">Create</button>
+      </div>
+
+      <form class="auth-form" id="loginForm">
+        <label>
+          <span>Account</span>
+          <select id="loginAccountSelect" name="accountId"></select>
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" placeholder="Account password" required>
+        </label>
+        <button class="primary-button" type="submit">Sign In</button>
+      </form>
+
+      <form class="auth-form hidden" id="createAccountForm">
+        <label>
+          <span>Account Name</span>
+          <input type="text" name="name" autocomplete="username" placeholder="Example: Pattara main" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="new-password" placeholder="Minimum 4 characters" required>
+        </label>
+        <label>
+          <span>Confirm Password</span>
+          <input type="password" name="confirm" autocomplete="new-password" placeholder="Repeat password" required>
+        </label>
+        <button class="primary-button" type="submit">Create Account</button>
+      </form>
+
+      <p class="auth-note">Profiles keep trades, strategies, custom pairs, and settings separated on this device. This is local app access, not cloud-grade account security.</p>
+    </section>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
