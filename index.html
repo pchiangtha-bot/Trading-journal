@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FX Edge Journal</title>
+  <meta name="theme-color" content="#0f766e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="FX Edge">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <div class="brand">
+        <div class="brand-mark">FX</div>
+        <div>
+          <h1>FX Edge Journal</h1>
+          <p>Trade log. Review. Strategy lab.</p>
+        </div>
+      </div>
+
+      <nav class="nav-tabs" aria-label="Primary">
+        <button class="nav-tab active" data-view="journal">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          Journal
+        </button>
+        <button class="nav-tab" data-view="analytics">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-7"/></svg>
+          Analytics
+        </button>
+        <button class="nav-tab" data-view="strategy">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7l7-4zM9 12l2 2 4-5"/></svg>
+          Strategy Lab
+        </button>
+      </nav>
+
+      <section class="track-panel" aria-labelledby="track-title">
+        <div class="section-heading">
+          <h2 id="track-title">Trader Track</h2>
+          <span id="trackScore">0%</span>
+        </div>
+        <div class="progress-rail" aria-hidden="true">
+          <div class="progress-fill" id="trackFill"></div>
+        </div>
+        <dl class="track-list">
+          <div>
+            <dt>Trades</dt>
+            <dd id="trackTrades">0</dd>
+          </div>
+          <div>
+            <dt>Discipline</dt>
+            <dd id="trackDiscipline">0%</dd>
+          </div>
+          <div>
+            <dt>Expectancy</dt>
+            <dd id="trackExpectancy">0.00R</dd>
+          </div>
+        </dl>
+      </section>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Performance workspace</p>
+          <h2 id="viewTitle">Journal</h2>
+        </div>
+        <div class="top-actions">
+          <button class="tool-button" id="demoBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            Demo
+          </button>
+          <button class="tool-button" id="exportJsonBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+            JSON
+          </button>
+          <button class="tool-button" id="exportCsvBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10l6 6v10H4zM14 4v6h6M8 15h8M8 18h5"/></svg>
+            CSV
+          </button>
+          <button class="tool-button" id="importBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg>
+            Import
+          </button>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+      </header>
+
+      <section class="view active" id="journalView">
+        <div class="kpi-grid" aria-label="Trading performance summary">
+          <article class="kpi-card accent-teal">
+            <span>Net R</span>
+            <strong id="netR">0.00R</strong>
+            <small id="netPl">$0</small>
+          </article>
+          <article class="kpi-card accent-green">
+            <span>Win Rate</span>
+            <strong id="winRate">0%</strong>
+            <small id="tradeCount">0 trades</small>
+          </article>
+          <article class="kpi-card accent-blue">
+            <span>Profit Factor</span>
+            <strong id="profitFactor">0.00</strong>
+            <small id="avgR">0.00R average</small>
+          </article>
+          <article class="kpi-card accent-amber">
+            <span>Drawdown</span>
+            <strong id="drawdown">0.00R</strong>
+            <small id="bestSetup">No setup yet</small>
+          </article>
+        </div>
+
+        <div class="journal-layout">
+          <section class="panel trade-form-panel" aria-labelledby="trade-form-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Record</p>
+                <h3 id="trade-form-title">Trade Ticket</h3>
+              </div>
+              <button class="icon-button" id="resetTradeBtn" type="button" title="Reset ticket" aria-label="Reset ticket">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v6h6"/></svg>
+              </button>
+            </div>
+
+            <form id="tradeForm" class="trade-form">
+              <input type="hidden" name="id">
+              <div class="form-grid two">
+                <label>
+                  <span>Date</span>
+                  <input type="date" name="date" required>
+                </label>
+                <label>
+                  <span>Pair</span>
+                  <input list="pairList" name="pair" placeholder="EUR/USD" required>
+                  <datalist id="pairList">
+                    <option value="EUR/USD">
+                    <option value="GBP/USD">
+                    <option value="USD/JPY">
+                    <option value="AUD/USD">
+                    <option value="USD/CAD">
+                    <option value="USD/CHF">
+                    <option value="NZD/USD">
+                    <option value="EUR/JPY">
+                    <option value="GBP/JPY">
+                    <option value="XAU/USD">
+                  </datalist>
+                </label>
+              </div>
+
+              <div class="form-grid two">
+                <label>
+                  <span>Session</span>
+                  <select name="session">
+                    <option>Asia</option>
+                    <option>London</option>
+                    <option>New York</option>
+                    <option>London/New York</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Setup</span>
+                  <input name="setup" placeholder="Liquidity sweep" required>
+                </label>
+              </div>
+
+              <div class="field-block">
+                <span class="field-label">Direction</span>
+                <div class="segmented" data-field="direction">
+                  <button type="button" class="segment active" data-value="Buy">Buy</button>
+                  <button type="button" class="segment" data-value="Sell">Sell</button>
+                </div>
+                <input type="hidden" name="direction" value="Buy">
+              </div>
+
+              <div class="form-grid four">
+                <label>
+                  <span>Entry</span>
+                  <input type="number" name="entry" step="0.00001" placeholder="1.08450">
+                </label>
+                <label>
+                  <span>Stop</span>
+                  <input type="number" name="stop" step="0.00001" placeholder="1.08150">
+                </label>
+                <label>
+                  <span>Target</span>
+                  <input type="number" name="target" step="0.00001" placeholder="1.09100">
+                </label>
+                <label>
+                  <span>Exit</span>
+                  <input type="number" name="exit" step="0.00001" placeholder="1.08900">
+                </label>
+              </div>
+
+              <div class="form-grid three">
+                <label>
+                  <span>Risk $</span>
+                  <input type="number" name="risk" min="0" step="1" placeholder="100">
+                </label>
+                <label>
+                  <span>Manual R</span>
+                  <input type="number" name="manualR" step="0.01" placeholder="Auto">
+                </label>
+                <label>
+                  <span>Mistake</span>
+                  <select name="mistake">
+                    <option>None</option>
+                    <option>FOMO entry</option>
+                    <option>Late entry</option>
+                    <option>Moved stop</option>
+                    <option>Early exit</option>
+                    <option>Oversized risk</option>
+                    <option>Skipped plan</option>
+                    <option>Revenge trade</option>
+                    <option>News surprise</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="slider-grid">
+                <label>
+                  <span>Confidence <output id="confidenceOut">60</output></span>
+                  <input type="range" name="confidence" min="0" max="100" value="60">
+                </label>
+                <label>
+                  <span>Discipline <output id="disciplineOut">70</output></span>
+                  <input type="range" name="discipline" min="0" max="100" value="70">
+                </label>
+              </div>
+
+              <label>
+                <span>Tags</span>
+                <input name="tags" placeholder="trend, break-and-retest, news-day">
+              </label>
+              <label>
+                <span>Review Notes</span>
+                <textarea name="notes" rows="4" placeholder="What happened before, during, and after the trade?"></textarea>
+              </label>
+
+              <button class="primary-button" type="submit" id="saveTradeBtn">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM7 21v-8h10v8M7 3v5h8"/></svg>
+                Save Trade
+              </button>
+            </form>
+          </section>
+
+          <section class="panel table-panel" aria-labelledby="journal-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Journal</p>
+                <h3 id="journal-title">Trade History</h3>
+              </div>
+              <button class="danger-button" id="clearBtn" type="button">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M9 11v6M15 11v6M6 6l1 15h10l1-15"/></svg>
+                Clear
+              </button>
+            </div>
+
+            <div class="filter-bar" role="search">
+              <label>
+                <span>Search</span>
+                <input id="searchInput" placeholder="Pair, setup, tags, notes">
+              </label>
+              <label>
+                <span>Outcome</span>
+                <select id="outcomeFilter">
+                  <option value="all">All</option>
+                  <option value="win">Wins</option>
+                  <option value="loss">Losses</option>
+                  <option value="be">Breakeven</option>
+                </select>
+              </label>
+              <label>
+                <span>Setup</span>
+                <select id="setupFilter">
+                  <option value="all">All setups</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Pair</th>
+                    <th>Dir</th>
+                    <th>Setup</th>
+                    <th>R</th>
+                    <th>P/L</th>
+                    <th>Discipline</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="tradeTable"></tbody>
+              </table>
+              <div class="empty-state" id="emptyJournal">No trades recorded.</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="analyticsView">
+        <div class="analytics-grid">
+          <section class="panel chart-panel" aria-labelledby="chart-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Equity</p>
+                <h3 id="chart-title">Cumulative R Curve</h3>
+              </div>
+              <span class="status-pill" id="expectancyPill">0.00R expectancy</span>
+            </div>
+            <canvas id="equityChart" height="320"></canvas>
+          </section>
+
+          <section class="panel insights-panel" aria-labelledby="insights-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Review</p>
+                <h3 id="insights-title">Skill Signals</h3>
+              </div>
+            </div>
+            <div class="insight-list" id="insightList"></div>
+          </section>
+        </div>
+
+        <div class="analysis-panels">
+          <section class="panel" aria-labelledby="setup-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Setups</p>
+                <h3 id="setup-title">Leaderboard</h3>
+              </div>
+            </div>
+            <div id="setupLeaderboard" class="leaderboard"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="session-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Timing</p>
+                <h3 id="session-title">Session Edge</h3>
+              </div>
+            </div>
+            <div id="sessionBreakdown" class="leaderboard"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="mistake-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Leaks</p>
+                <h3 id="mistake-title">Mistake Cost</h3>
+              </div>
+            </div>
+            <div id="mistakeBreakdown" class="leaderboard"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="strategyView">
+        <div class="strategy-grid">
+          <section class="panel" aria-labelledby="profile-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Best Trade</p>
+                <h3 id="profile-title">Current Profile</h3>
+              </div>
+              <button class="tool-button" id="useProfileBtn" type="button">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                Strategy
+              </button>
+            </div>
+            <div class="profile-grid" id="bestProfile"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="strategy-form-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Rules</p>
+                <h3 id="strategy-form-title">Strategy Builder</h3>
+              </div>
+              <button class="icon-button" id="resetStrategyBtn" type="button" title="Reset strategy" aria-label="Reset strategy">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v6h6"/></svg>
+              </button>
+            </div>
+            <form id="strategyForm" class="strategy-form">
+              <input type="hidden" name="id">
+              <label>
+                <span>Name</span>
+                <input name="name" placeholder="London liquidity sweep" required>
+              </label>
+              <label>
+                <span>Market Condition</span>
+                <textarea name="market" rows="2" placeholder="Trend, range, volatility, news filter"></textarea>
+              </label>
+              <label>
+                <span>Entry Trigger</span>
+                <textarea name="trigger" rows="2" placeholder="Exact trigger that permits execution"></textarea>
+              </label>
+              <label>
+                <span>Invalidation</span>
+                <textarea name="invalidation" rows="2" placeholder="Where the idea is wrong"></textarea>
+              </label>
+              <label>
+                <span>Risk Rule</span>
+                <textarea name="riskRule" rows="2" placeholder="Risk %, max trades, max daily loss"></textarea>
+              </label>
+              <label>
+                <span>Management</span>
+                <textarea name="management" rows="2" placeholder="Partial, trail, hold, exit rule"></textarea>
+              </label>
+              <label>
+                <span>Review Rule</span>
+                <textarea name="reviewRule" rows="2" placeholder="What must be reviewed after each trade"></textarea>
+              </label>
+              <button class="primary-button" type="submit">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM7 21v-8h10v8M7 3v5h8"/></svg>
+                Save Strategy
+              </button>
+            </form>
+          </section>
+
+          <section class="panel strategy-list-panel" aria-labelledby="strategy-list-title">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Playbook</p>
+                <h3 id="strategy-list-title">Saved Strategies</h3>
+              </div>
+            </div>
+            <div id="strategyList" class="strategy-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
