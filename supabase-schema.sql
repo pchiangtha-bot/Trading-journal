@@ -53,3 +53,79 @@ begin
   end if;
 end
 $$;
+
+create table if not exists public.mt5_bridge_tokens (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  token_hash text not null unique,
+  label text not null default 'MT5 desktop',
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz,
+  revoked_at timestamptz
+);
+
+alter table public.mt5_bridge_tokens enable row level security;
+
+drop policy if exists "Users can manage own MT5 bridge tokens" on public.mt5_bridge_tokens;
+create policy "Users can manage own MT5 bridge tokens"
+on public.mt5_bridge_tokens
+for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create table if not exists public.mt5_detected_orders (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  external_id text not null,
+  broker_account text,
+  broker_server text,
+  symbol text not null,
+  direction text not null,
+  opened_at timestamptz,
+  closed_at timestamptz,
+  lot_size numeric,
+  entry_price numeric,
+  exit_price numeric,
+  stop_loss numeric,
+  take_profit numeric,
+  profit numeric,
+  commission numeric,
+  swap numeric,
+  status text not null default 'new' check (status in ('new', 'recorded', 'ignored')),
+  raw jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, external_id)
+);
+
+alter table public.mt5_detected_orders enable row level security;
+
+drop policy if exists "Users can read own MT5 detected orders" on public.mt5_detected_orders;
+create policy "Users can read own MT5 detected orders"
+on public.mt5_detected_orders
+for select
+to authenticated
+using (auth.uid() = user_id);
+
+drop policy if exists "Users can update own MT5 detected orders" on public.mt5_detected_orders;
+create policy "Users can update own MT5 detected orders"
+on public.mt5_detected_orders
+for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'mt5_detected_orders'
+  ) then
+    alter publication supabase_realtime add table public.mt5_detected_orders;
+  end if;
+end
+$$;

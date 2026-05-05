@@ -20,6 +20,28 @@ The app can now use Supabase email/password login for realtime sync between iPho
 
 Only the Supabase project URL and publishable key are used in the browser. Do not put a `service_role` key, database password, or broker password in this static app.
 
+## MT5 Closed-Position Automation
+
+This app includes a safe MT5 bridge for detecting closed positions. It does not trade for you and does not need your broker password. MT5 desktop sends closed-position details to a Supabase Edge Function, then the app shows a Detected Closed Positions inbox so you can review and record the trade.
+
+1. Run the latest `supabase-schema.sql` in Supabase SQL Editor.
+2. Deploy the Edge Function in `supabase/functions/mt5-closed-order/index.ts` with JWT verification disabled for this webhook.
+3. Sign in to the app with Cloud email/password.
+4. In the sidebar Cloud Sync panel, click Token under MT5 Bridge.
+5. Keep the shown WebhookUrl and BridgeToken somewhere private. The token is only shown once.
+6. In MT5 desktop, open Tools > Options > Expert Advisors and enable Allow WebRequest for listed URL.
+7. Add this URL exactly: `https://lzaetartgfejsnwpiezc.supabase.co`
+8. Copy `mt5/FxEdgeClosedOrderBridge.mq5` into your MT5 `MQL5/Experts` folder, compile it in MetaEditor, then attach it to one chart.
+9. Paste the WebhookUrl and BridgeToken into the EA inputs.
+
+When a position fully closes, the Journal page will show it in Detected Closed Positions. Click Record to load it into the Trade Ticket, review the fields, then Save Trade.
+
+With Supabase CLI, the deploy command is:
+
+```powershell
+supabase functions deploy mt5-closed-order --no-verify-jwt
+```
+
 ## Use On iPhone
 
 For the best iPhone experience, host this folder as a small website, open the URL in Safari, then use Share > Add to Home Screen.
@@ -59,6 +81,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - Sidebar daylight-saving status for New York, London, and Sydney session timing
 - Local account profiles with password-gated sign in, account switching, and separated trades, strategies, custom pairs, and settings per account
 - Supabase email/password cloud sync with local-profile migration and realtime updates across devices
+- MT5 desktop closed-position bridge with review-before-record inbox
 
 ## Market Chart Notes
 

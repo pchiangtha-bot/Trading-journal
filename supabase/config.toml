@@ -1,0 +1,2 @@
+[functions.mt5-closed-order]
+verify_jwt = false

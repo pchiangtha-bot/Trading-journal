@@ -16,6 +16,8 @@ const supabaseConfig = {
   publishableKey: "sb_publishable_bfsaovSh71BLeqp7CNQw8Q_Jkg3U4N3"
 };
 const cloudProfileTable = "journal_profiles";
+const mt5TokenTable = "mt5_bridge_tokens";
+const mt5OrderTable = "mt5_detected_orders";
 let equityPeriod = "day";
 let equityChartState = { points: [] };
 let barChartStates = {};
@@ -250,9 +252,13 @@ let supabaseClient = null;
 let cloudSession = null;
 let cloudUser = null;
 let cloudSubscription = null;
+let mt5OrderSubscription = null;
 let cloudSaveTimer = null;
 let isApplyingCloudSnapshot = false;
 let cloudClientId = "";
+let mt5DetectedOrders = [];
+let pendingMt5OrderId = "";
+let latestMt5BridgeSetup = "";
 let cloudSyncState = {
   label: "Local",
   detail: "Use email/password to sync this journal between iPhone and PC.",
@@ -690,12 +696,46 @@ function isActiveCloudProfile() {
 function friendlyCloudError(error) {
   const message = String(error?.message || error || "Cloud sync failed.");
   const lower = message.toLowerCase();
-  if (error?.code === "42P01" || lower.includes("relation") || lower.includes(cloudProfileTable)) {
+  if (
+    error?.code === "42P01"
+    || lower.includes("relation")
+    || lower.includes(cloudProfileTable)
+    || lower.includes(mt5TokenTable)
+    || lower.includes(mt5OrderTable)
+  ) {
     return "Run supabase-schema.sql in Supabase SQL Editor first.";
   }
   if (lower.includes("invalid login credentials")) return "Email or password is not correct.";
   if (lower.includes("fetch")) return "Supabase is unreachable. Check internet and the project URL.";
   return message;
+}
+
+async function sha256Hex(value) {
+  const text = String(value || "");
+  if (globalThis.crypto?.subtle && globalThis.TextEncoder) {
+    const data = new TextEncoder().encode(text);
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+    return bytesToHex(new Uint8Array(digest));
+  }
+  return fallbackHash(text);
+}
+
+function randomToken(prefix = "fxej") {
+  const cryptoApi = globalThis.crypto;
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let body = "";
+  if (cryptoApi?.getRandomValues) {
+    const bytes = new Uint8Array(36);
+    cryptoApi.getRandomValues(bytes);
+    body = Array.from(bytes).map((byte) => alphabet[byte % alphabet.length]).join("");
+  } else {
+    body = `${Date.now()}${Math.random()}`.replace(/\D/g, "").padEnd(36, "0").slice(0, 36);
+  }
+  return `${prefix}_${body}`;
+}
+
+function mt5WebhookUrl() {
+  return `${supabaseConfig.url.replace(/\/$/, "")}/functions/v1/mt5-closed-order`;
 }
 
 function setCloudStatus(label, detail = "", tone = "muted") {
@@ -734,6 +774,14 @@ function syncCloudUi() {
 
   const signOutButton = $("#cloudSignOutBtn");
   if (signOutButton) signOutButton.disabled = !signedIn;
+
+  const bridgePanel = $("#mt5BridgePanel");
+  if (bridgePanel) bridgePanel.classList.toggle("hidden", !signedIn);
+
+  const output = $("#mt5BridgeOutput");
+  if (output && latestMt5BridgeSetup) output.value = latestMt5BridgeSetup;
+
+  renderMt5Inbox();
 }
 
 function initSupabaseClient() {
@@ -967,6 +1015,254 @@ function subscribeCloudProfile() {
     });
 }
 
+async function generateMt5BridgeToken() {
+  if (!supabaseClient || !cloudUser) {
+    showAuthOverlay("cloud", false);
+    return;
+  }
+
+  const token = randomToken("fxej_mt5");
+  const tokenHash = await sha256Hex(token);
+  const label = `MT5 desktop ${new Date().toLocaleDateString()}`;
+  const { error } = await supabaseClient.from(mt5TokenTable).insert({
+    user_id: cloudUser.id,
+    token_hash: tokenHash,
+    label
+  });
+
+  if (error) {
+    showToast(friendlyCloudError(error));
+    return;
+  }
+
+  latestMt5BridgeSetup = [
+    `WebhookUrl=${mt5WebhookUrl()}`,
+    `BridgeToken=${token}`,
+    "MT5 Allow URL=https://lzaetartgfejsnwpiezc.supabase.co"
+  ].join("\n");
+  const output = $("#mt5BridgeOutput");
+  if (output) {
+    output.value = latestMt5BridgeSetup;
+    output.focus();
+    output.select();
+  }
+  showToast("MT5 bridge token created. Save it now; it is shown once.");
+}
+
+function copyMt5BridgeSetup() {
+  const output = $("#mt5BridgeOutput");
+  if (!output || !output.value.trim()) {
+    showToast("Generate an MT5 token first.");
+    return;
+  }
+  output.focus();
+  output.select();
+  navigator.clipboard?.writeText(output.value)
+    .then(() => showToast("MT5 setup copied."))
+    .catch(() => showToast("Selected setup text is ready to copy."));
+}
+
+function subscribeMt5Orders() {
+  if (!supabaseClient || !cloudUser) return;
+  if (mt5OrderSubscription) supabaseClient.removeChannel(mt5OrderSubscription);
+  mt5OrderSubscription = supabaseClient
+    .channel(`mt5-orders-${cloudUser.id}-${ensureCloudClientId()}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: mt5OrderTable,
+        filter: `user_id=eq.${cloudUser.id}`
+      },
+      () => {
+        fetchMt5DetectedOrders({ silent: true }).catch(() => {});
+      }
+    )
+    .subscribe();
+}
+
+async function fetchMt5DetectedOrders(options = {}) {
+  const { silent = false } = options;
+  if (!supabaseClient || !cloudUser) {
+    mt5DetectedOrders = [];
+    renderMt5Inbox();
+    return;
+  }
+
+  const { data, error } = await supabaseClient
+    .from(mt5OrderTable)
+    .select("*")
+    .eq("user_id", cloudUser.id)
+    .eq("status", "new")
+    .order("closed_at", { ascending: false })
+    .limit(20);
+
+  if (error) {
+    if (!silent) showToast(friendlyCloudError(error));
+    return;
+  }
+
+  const previousCount = mt5DetectedOrders.length;
+  mt5DetectedOrders = Array.isArray(data) ? data : [];
+  renderMt5Inbox();
+  if (mt5DetectedOrders.length > previousCount && !silent) showToast("MT5 closed position detected.");
+}
+
+function mt5OrderById(id) {
+  return mt5DetectedOrders.find((order) => order.id === id);
+}
+
+function formatDateTime(value) {
+  if (!value) return "No time";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function normalizeBrokerSymbol(symbol) {
+  const raw = String(symbol || "").toUpperCase().trim();
+  const compact = raw.replace(/[^A-Z0-9]/g, "");
+  const quotes = ["USDT", "USD", "JPY", "EUR", "GBP", "AUD", "CAD", "CHF", "NZD"];
+  const bases = ["XAU", "XAG", "BTC", "ETH", "EUR", "GBP", "AUD", "USD", "CAD", "CHF", "NZD"];
+
+  for (const base of bases) {
+    for (const quote of quotes) {
+      const joined = `${base}${quote}`;
+      if (compact === joined || compact.startsWith(joined)) return `${base}/${quote}`;
+    }
+  }
+
+  return normalizePair(raw);
+}
+
+function mt5OrderToTrade(order) {
+  const pair = normalizeBrokerSymbol(order.symbol);
+  ensurePairAvailable(pair, order.contract_size);
+  const closedAt = order.closed_at ? new Date(order.closed_at) : new Date();
+  const commission = parseOptionalNumber(order.commission) ?? 0;
+  const swap = parseOptionalNumber(order.swap) ?? 0;
+  const lotSize = parseOptionalNumber(order.lot_size) ?? 0;
+  const entry = parseOptionalNumber(order.entry_price) ?? 0;
+  const exit = parseOptionalNumber(order.exit_price) ?? 0;
+  const stop = parseOptionalNumber(order.stop_loss) ?? 0;
+  const target = parseOptionalNumber(order.take_profit) ?? 0;
+  const direction = String(order.direction || "Buy").toLowerCase() === "sell" ? "Sell" : "Buy";
+  const calc = calculateTradeNumbers({
+    pair,
+    direction,
+    entry,
+    stop,
+    target,
+    exit,
+    lotSize,
+    contractSize: defaultContractSize(pair)
+  });
+
+  return {
+    id: randomId("trade"),
+    date: Number.isNaN(closedAt.getTime()) ? localDateKey() : closedAt.toISOString().slice(0, 10),
+    pair,
+    session: "MT5",
+    direction,
+    setup: "MT5 closed position",
+    entry,
+    stop,
+    target,
+    exit,
+    lotSize,
+    contractSize: calc.contractSize,
+    quoteToAccount: calc.quoteToAccount ?? "",
+    quoteToAccountRate: roundNumber(calc.quoteToAccountRate, 6),
+    manualR: "",
+    risk: roundNumber(calc.riskAmount, 2),
+    riskAmount: roundNumber(calc.riskAmount, 2),
+    actualPl: parseOptionalNumber(order.profit) ?? roundNumber(calc.actualPl, 2),
+    targetPl: roundNumber(calc.targetPl, 2),
+    resultR: roundNumber(calc.resultR, 2),
+    actualR: roundNumber(calc.actualR, 2),
+    targetR: roundNumber(calc.targetR, 2),
+    stopPips: roundNumber(calc.stopPips, 1),
+    actualPips: roundNumber(calc.actualPips, 1),
+    targetPips: roundNumber(calc.targetPips, 1),
+    commissionPerLot: settings.commissionPerLot,
+    commission,
+    swap,
+    mistake: "None",
+    confidence: 60,
+    discipline: 70,
+    tags: ["mt5", "auto-detected"],
+    notes: [
+      `Imported from MT5 closed position ${order.external_id || order.position_id || ""}.`.trim(),
+      order.broker_account ? `Broker account: ${order.broker_account}.` : "",
+      Number.isFinite(parseOptionalNumber(order.profit)) ? `MT5 net profit before journal fees: ${currencyFormatter.format(parseOptionalNumber(order.profit))}.` : ""
+    ].filter(Boolean).join("\n")
+  };
+}
+
+function prefillTradeFromMt5Order(orderId) {
+  const order = mt5OrderById(orderId);
+  if (!order) return;
+  const trade = mt5OrderToTrade(order);
+  pendingMt5OrderId = order.id;
+  fillTradeForm(trade);
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  showToast("MT5 position loaded into the trade ticket.");
+}
+
+async function markMt5OrderStatus(orderId, status = "recorded") {
+  if (!supabaseClient || !cloudUser || !orderId) return;
+  const { error } = await supabaseClient
+    .from(mt5OrderTable)
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", orderId)
+    .eq("user_id", cloudUser.id);
+
+  if (error) {
+    showToast(friendlyCloudError(error));
+    return;
+  }
+
+  mt5DetectedOrders = mt5DetectedOrders.filter((order) => order.id !== orderId);
+  renderMt5Inbox();
+}
+
+function renderMt5Inbox() {
+  const panel = $("#mt5InboxPanel");
+  const list = $("#mt5InboxList");
+  if (!panel || !list) return;
+  const showPanel = Boolean(cloudUser && mt5DetectedOrders.length);
+  panel.classList.toggle("hidden", !showPanel);
+  if (!showPanel) {
+    list.innerHTML = "";
+    return;
+  }
+
+  list.innerHTML = mt5DetectedOrders
+    .map((order) => {
+      const direction = String(order.direction || "Buy").toLowerCase() === "sell" ? "Sell" : "Buy";
+      const pl = parseOptionalNumber(order.profit);
+      const commission = parseOptionalNumber(order.commission) ?? 0;
+      const swap = parseOptionalNumber(order.swap) ?? 0;
+      return `
+        <article class="mt5-order-card">
+          <div>
+            <strong>${escapeHtml(normalizeBrokerSymbol(order.symbol))}
+              <span class="mt5-pill ${direction.toLowerCase()}">${escapeHtml(direction)}</span>
+            </strong>
+            <p>${escapeHtml(formatDateTime(order.closed_at))} | ${numberFormatter.format(toNumber(order.lot_size))} lot | Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
+            <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
+          </div>
+          <div class="mt5-order-actions">
+            <button class="mini-button text-mini" type="button" data-mt5-action="record" data-id="${escapeHtml(order.id)}">Record</button>
+            <button class="mini-button text-mini danger" type="button" data-mt5-action="ignore" data-id="${escapeHtml(order.id)}">Ignore</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
 async function openCloudProfile(options = {}) {
   const { silent = false } = options;
   if (!cloudUser) {
@@ -976,8 +1272,10 @@ async function openCloudProfile(options = {}) {
   const account = ensureCloudAccount(cloudUser);
   setActiveAccount(account, silent ? "" : "Cloud profile opened.");
   subscribeCloudProfile();
+  subscribeMt5Orders();
   try {
     await fetchCloudProfile({ apply: true, createIfMissing: true, silent });
+    await fetchMt5DetectedOrders({ silent: true });
   } catch (error) {
     showToast(friendlyCloudError(error));
   }
@@ -1027,12 +1325,20 @@ async function handleCloudSessionChange(session, options = {}) {
       supabaseClient.removeChannel(cloudSubscription);
       cloudSubscription = null;
     }
+    if (mt5OrderSubscription) {
+      supabaseClient.removeChannel(mt5OrderSubscription);
+      mt5OrderSubscription = null;
+    }
+    mt5DetectedOrders = [];
     setCloudStatus("Ready", "Sign in with email/password to sync between devices.", "ready");
+    renderMt5Inbox();
     return;
   }
 
   ensureCloudAccount(cloudUser);
   subscribeCloudProfile();
+  subscribeMt5Orders();
+  fetchMt5DetectedOrders({ silent: true }).catch(() => {});
   if (!activeAccount || (isCloudAccount(activeAccount) && activeAccount.cloudUserId === cloudUser.id)) {
     await openCloudProfile({ silent: options.source === "init" });
     return;
@@ -2078,6 +2384,7 @@ function render() {
   renderTable();
   renderAnalytics(analyze(analyticsTrades), analyticsTrades);
   renderStrategies();
+  renderMt5Inbox();
 }
 
 function renderSummary(stats) {
@@ -3358,6 +3665,7 @@ function fillTradeForm(trade) {
 
 function resetTradeForm() {
   const form = $("#tradeForm");
+  pendingMt5OrderId = "";
   form.reset();
   form.elements.id.value = "";
   form.elements.date.value = new Date().toISOString().slice(0, 10);
@@ -3620,6 +3928,25 @@ function bindEvents() {
   const cloudSignOutButton = $("#cloudSignOutBtn");
   if (cloudSignOutButton) cloudSignOutButton.addEventListener("click", handleCloudSignOut);
 
+  const generateMt5TokenButton = $("#generateMt5TokenBtn");
+  if (generateMt5TokenButton) generateMt5TokenButton.addEventListener("click", generateMt5BridgeToken);
+
+  const copyMt5BridgeButton = $("#copyMt5BridgeBtn");
+  if (copyMt5BridgeButton) copyMt5BridgeButton.addEventListener("click", copyMt5BridgeSetup);
+
+  const refreshMt5OrdersButton = $("#refreshMt5OrdersBtn");
+  if (refreshMt5OrdersButton) refreshMt5OrdersButton.addEventListener("click", () => fetchMt5DetectedOrders());
+
+  const mt5InboxList = $("#mt5InboxList");
+  if (mt5InboxList) {
+    mt5InboxList.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-mt5-action]");
+      if (!button) return;
+      if (button.dataset.mt5Action === "record") prefillTradeFromMt5Order(button.dataset.id);
+      if (button.dataset.mt5Action === "ignore") markMt5OrderStatus(button.dataset.id, "ignored");
+    });
+  }
+
   const authOverlay = $("#authOverlay");
   if (authOverlay) {
     authOverlay.addEventListener("pointerdown", (event) => {
@@ -3709,6 +4036,10 @@ function bindEvents() {
     if (index >= 0) trades[index] = trade;
     else trades.push(trade);
     saveTrades();
+    if (pendingMt5OrderId) {
+      markMt5OrderStatus(pendingMt5OrderId, "recorded");
+      pendingMt5OrderId = "";
+    }
     resetTradeForm();
     render();
     showToast("Trade saved.");

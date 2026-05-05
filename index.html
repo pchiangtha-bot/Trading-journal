@@ -60,6 +60,17 @@
             <button class="mini-button text-mini danger" type="button" id="cloudSignOutBtn">Out</button>
           </div>
         </div>
+        <div class="mt5-bridge-panel hidden" id="mt5BridgePanel">
+          <div class="section-heading">
+            <strong>MT5 Bridge</strong>
+            <button class="mini-button text-mini" type="button" id="generateMt5TokenBtn">Token</button>
+          </div>
+          <textarea id="mt5BridgeOutput" rows="5" readonly placeholder="Generate a token after cloud sign in."></textarea>
+          <button class="tool-button" type="button" id="copyMt5BridgeBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z"/><path d="M6 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
+            Copy Setup
+          </button>
+        </div>
         <p class="cloud-note" id="cloudNote">Use email/password to sync this journal between iPhone and PC.</p>
       </section>
 
@@ -208,6 +219,20 @@
           </article>
         </div>
 
+        <section class="panel mt5-inbox-panel hidden" id="mt5InboxPanel" aria-labelledby="mt5-inbox-title">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">MT5 Automation</p>
+              <h3 id="mt5-inbox-title">Detected Closed Positions</h3>
+            </div>
+            <button class="tool-button" type="button" id="refreshMt5OrdersBtn">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 0 15 6.7M21 20v-6h-6M21 12A9 9 0 0 0 6 5.3M3 4v6h6"/></svg>
+              Refresh
+            </button>
+          </div>
+          <div class="mt5-inbox-list" id="mt5InboxList"></div>
+        </section>
+
         <div class="journal-layout">
           <section class="panel trade-form-panel" aria-labelledby="trade-form-title">
             <div class="panel-header">
@@ -289,6 +314,7 @@
                     <option>London</option>
                     <option>New York</option>
                     <option>London/New York</option>
+                    <option>MT5</option>
                   </select>
                 </label>
                 <label>

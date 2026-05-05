@@ -203,6 +203,28 @@ button {
   gap: 6px;
 }
 
+.mt5-bridge-panel {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.mt5-bridge-panel.hidden {
+  display: none;
+}
+
+.mt5-bridge-panel strong {
+  font-size: 0.82rem;
+}
+
+.mt5-bridge-panel textarea {
+  min-height: 116px;
+  resize: vertical;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
 .text-mini {
   width: auto;
   min-width: 0;
@@ -514,6 +536,70 @@ button {
 
 .panel {
   padding: 18px;
+}
+
+.mt5-inbox-panel.hidden {
+  display: none;
+}
+
+.mt5-inbox-panel {
+  margin: 0 0 14px;
+}
+
+.mt5-inbox-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mt5-order-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+}
+
+.mt5-order-card strong {
+  display: block;
+  font-size: 0.94rem;
+}
+
+.mt5-order-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.mt5-order-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mt5-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.mt5-pill.buy {
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.mt5-pill.sell {
+  color: var(--red);
+  background: var(--red-soft);
 }
 
 .trade-form,
