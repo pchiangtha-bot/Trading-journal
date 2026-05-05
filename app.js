@@ -1245,6 +1245,10 @@ function renderMt5Inbox() {
       const pl = parseOptionalNumber(order.profit);
       const commission = parseOptionalNumber(order.commission) ?? 0;
       const swap = parseOptionalNumber(order.swap) ?? 0;
+      const stopLoss = parseOptionalNumber(order.stop_loss);
+      const takeProfit = parseOptionalNumber(order.take_profit);
+      const stopText = stopLoss && stopLoss > 0 ? rateFormatter.format(stopLoss) : "Not sent";
+      const targetText = takeProfit && takeProfit > 0 ? rateFormatter.format(takeProfit) : "Not sent";
       return `
         <article class="mt5-order-card">
           <div>
@@ -1252,7 +1256,7 @@ function renderMt5Inbox() {
               <span class="mt5-pill ${direction.toLowerCase()}">${escapeHtml(direction)}</span>
             </strong>
             <p>${escapeHtml(formatDateTime(order.closed_at))} | ${numberFormatter.format(toNumber(order.lot_size))} lot | Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
-            <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
+            <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Stop ${escapeHtml(stopText)} | Target ${escapeHtml(targetText)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
           </div>
           <div class="mt5-order-actions">
             <button class="mini-button text-mini" type="button" data-mt5-action="record" data-id="${escapeHtml(order.id)}">Record</button>

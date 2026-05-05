@@ -129,8 +129,8 @@ bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeK
    if(symbol == "" || entryVolume <= 0.0 || exitVolume <= 0.0)
       return(false);
 
-   double stopLoss = 0.0;
-   double takeProfit = 0.0;
+   double stopLoss = HistoryDealGetDouble(exitDeal, DEAL_SL);
+   double takeProfit = HistoryDealGetDouble(exitDeal, DEAL_TP);
    FindHistoryStops(positionId, symbol, openTime, closeTime, stopLoss, takeProfit);
 
    double entryPrice = entryValue / entryVolume;
@@ -201,18 +201,45 @@ void FindHistoryStops(ulong positionId,
                       double &stopLoss,
                       double &takeProfit)
   {
-   stopLoss = 0.0;
-   takeProfit = 0.0;
-
    int days = (int)MathMax(1, HistoryLookbackDays);
    datetime fromTime = openTime > 0 ? openTime - 86400 : TimeCurrent() - days * 86400;
    datetime toTime = closeTime > 0 ? closeTime + 86400 : TimeCurrent() + 60;
    HistorySelect(fromTime, toTime);
 
-   datetime latestStopTime = 0;
-   datetime latestTargetTime = 0;
-   int total = HistoryOrdersTotal();
-   for(int i = 0; i < total; i++)
+   datetime latestStopTime = stopLoss > 0.0 && closeTime > 0 ? closeTime : 0;
+   datetime latestTargetTime = takeProfit > 0.0 && closeTime > 0 ? closeTime : 0;
+
+   int dealTotal = HistoryDealsTotal();
+   for(int i = 0; i < dealTotal; i++)
+     {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if((ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID) != positionId)
+         continue;
+
+      string dealSymbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
+      if(symbol != "" && dealSymbol != "" && dealSymbol != symbol)
+         continue;
+
+      double sl = HistoryDealGetDouble(ticket, DEAL_SL);
+      double tp = HistoryDealGetDouble(ticket, DEAL_TP);
+      datetime dealTime = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+
+      if(sl > 0.0 && dealTime >= latestStopTime)
+        {
+         stopLoss = sl;
+         latestStopTime = dealTime;
+        }
+      if(tp > 0.0 && dealTime >= latestTargetTime)
+        {
+         takeProfit = tp;
+         latestTargetTime = dealTime;
+        }
+     }
+
+   int orderTotal = HistoryOrdersTotal();
+   for(int i = 0; i < orderTotal; i++)
      {
       ulong ticket = HistoryOrderGetTicket(i);
       if(ticket == 0)
