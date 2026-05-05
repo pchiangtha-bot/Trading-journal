@@ -131,7 +131,7 @@ bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeK
 
    double stopLoss = 0.0;
    double takeProfit = 0.0;
-   FindHistoryStops(positionId, stopLoss, takeProfit);
+   FindHistoryStops(positionId, symbol, openTime, closeTime, stopLoss, takeProfit);
 
    double entryPrice = entryValue / entryVolume;
    double exitPrice = exitValue / exitVolume;
@@ -194,25 +194,60 @@ bool IsPositionStillOpen(ulong positionId)
    return(false);
   }
 
-void FindHistoryStops(ulong positionId, double &stopLoss, double &takeProfit)
+void FindHistoryStops(ulong positionId,
+                      string symbol,
+                      datetime openTime,
+                      datetime closeTime,
+                      double &stopLoss,
+                      double &takeProfit)
   {
    stopLoss = 0.0;
    takeProfit = 0.0;
+
+   int days = (int)MathMax(1, HistoryLookbackDays);
+   datetime fromTime = openTime > 0 ? openTime - 86400 : TimeCurrent() - days * 86400;
+   datetime toTime = closeTime > 0 ? closeTime + 86400 : TimeCurrent() + 60;
+   HistorySelect(fromTime, toTime);
+
+   datetime latestStopTime = 0;
+   datetime latestTargetTime = 0;
    int total = HistoryOrdersTotal();
    for(int i = 0; i < total; i++)
      {
       ulong ticket = HistoryOrderGetTicket(i);
       if(ticket == 0)
          continue;
-      if((ulong)HistoryOrderGetInteger(ticket, ORDER_POSITION_ID) != positionId)
+
+      ulong orderPositionId = (ulong)HistoryOrderGetInteger(ticket, ORDER_POSITION_ID);
+      ulong orderPositionById = (ulong)HistoryOrderGetInteger(ticket, ORDER_POSITION_BY_ID);
+      string orderSymbol = HistoryOrderGetString(ticket, ORDER_SYMBOL);
+      if(orderPositionId != positionId && orderPositionById != positionId)
+         continue;
+      if(symbol != "" && orderSymbol != "" && orderSymbol != symbol)
          continue;
 
       double sl = HistoryOrderGetDouble(ticket, ORDER_SL);
       double tp = HistoryOrderGetDouble(ticket, ORDER_TP);
+      datetime orderTime = (datetime)HistoryOrderGetInteger(ticket, ORDER_TIME_DONE);
+      if(orderTime == 0)
+         orderTime = (datetime)HistoryOrderGetInteger(ticket, ORDER_TIME_SETUP);
+
       if(sl > 0.0)
-         stopLoss = sl;
+        {
+         if(orderTime >= latestStopTime)
+           {
+            stopLoss = sl;
+            latestStopTime = orderTime;
+           }
+        }
       if(tp > 0.0)
-         takeProfit = tp;
+        {
+         if(orderTime >= latestTargetTime)
+           {
+            takeProfit = tp;
+            latestTargetTime = orderTime;
+           }
+        }
      }
   }
 

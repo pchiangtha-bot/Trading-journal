@@ -1163,9 +1163,9 @@ function mt5OrderToTrade(order) {
     id: randomId("trade"),
     date: Number.isNaN(closedAt.getTime()) ? localDateKey() : closedAt.toISOString().slice(0, 10),
     pair,
-    session: "MT5",
+    session: "",
     direction,
-    setup: "MT5 closed position",
+    setup: "",
     entry,
     stop,
     target,
@@ -1194,6 +1194,7 @@ function mt5OrderToTrade(order) {
     tags: ["mt5", "auto-detected"],
     notes: [
       `Imported from MT5 closed position ${order.external_id || order.position_id || ""}.`.trim(),
+      "Session and setup left blank for manual review.",
       order.broker_account ? `Broker account: ${order.broker_account}.` : "",
       Number.isFinite(parseOptionalNumber(order.profit)) ? `MT5 net profit before journal fees: ${currencyFormatter.format(parseOptionalNumber(order.profit))}.` : ""
     ].filter(Boolean).join("\n")

@@ -34,7 +34,7 @@ This app includes a safe MT5 bridge for detecting closed positions. It does not 
 8. Copy `mt5/FxEdgeClosedOrderBridge.mq5` into your MT5 `MQL5/Experts` folder, compile it in MetaEditor, then attach it to one chart.
 9. Paste the WebhookUrl and BridgeToken into the EA inputs.
 
-When a position fully closes, the Journal page will show it in Detected Closed Positions. Click Record to load it into the Trade Ticket, review the fields, then Save Trade.
+When a position fully closes, the Journal page will show it in Detected Closed Positions. Click Record to load broker facts into the Trade Ticket, then type your own Session and Setup before saving.
 
 With Supabase CLI, the deploy command is:
 
