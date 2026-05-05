@@ -6,6 +6,20 @@ An offline-first FX trading journal for recording trades, reviewing performance,
 
 Open `index.html` in a browser. The app stores account profiles, trades, strategies, custom pairs, and settings in browser `localStorage`.
 
+## Cloud Sync Setup
+
+The app can now use Supabase email/password login for realtime sync between iPhone and PC, while keeping local profiles available offline.
+
+1. In Supabase, open SQL Editor.
+2. Paste and run the contents of `supabase-schema.sql`.
+3. In Authentication > Providers, keep Email enabled.
+4. In Authentication > URL Configuration, add your GitHub Pages URL as the Site URL and Redirect URL.
+5. Deploy the app again so `index.html`, `app.js`, `styles.css`, `sw.js`, and `supabase-schema.sql` are all updated.
+6. Open the app, choose Cloud in the account dialog, then sign in or create a cloud account.
+7. To upload an existing local profile, unlock that local profile first, sign in to Cloud, then use Migrate in the Cloud Sync panel.
+
+Only the Supabase project URL and publishable key are used in the browser. Do not put a `service_role` key, database password, or broker password in this static app.
+
 ## Use On iPhone
 
 For the best iPhone experience, host this folder as a small website, open the URL in Safari, then use Share > Add to Home Screen.
@@ -40,9 +54,11 @@ If the Home Screen app still shows an older version after you update the files, 
 - iPhone-friendly analytics chart readouts: tap or drag charts to show the same short details without needing mouse hover
 - Setup leaderboard, session edge, and mistake cost analysis
 - Report-style analytics based on the MT/Pepperstone report structure: Summary, Profit & Loss, Long & Short, Symbols, and Risks
-- Market tools with Pepperstone and TradingView links
+- Market tools with Pepperstone, TradingView, and MetaTrader 5 links
 - Sidebar TradingView mini symbol chart, defaulting to Pepperstone XAU/USD, with changeable pair and range controls
+- Sidebar daylight-saving status for New York, London, and Sydney session timing
 - Local account profiles with password-gated sign in, account switching, and separated trades, strategies, custom pairs, and settings per account
+- Supabase email/password cloud sync with local-profile migration and realtime updates across devices
 
 ## Market Chart Notes
 
@@ -63,3 +79,5 @@ For EUR/USD, GBP/USD, AUD/USD, and XAU/USD, quote-to-USD is `1`. For USD/JPY, th
 ## Account Notes
 
 Accounts are local profiles for this browser/device. Passwords are stored as salted hashes when Web Crypto is available, but a static offline app cannot provide the same protection as a server-backed login system. Use the feature for separation and privacy on your device, not for high-security data protection.
+
+Cloud accounts use Supabase Auth. The app stores one cloud journal per email account in `public.journal_profiles`, protected by Row Level Security so each signed-in user can read and write only their own journal row.

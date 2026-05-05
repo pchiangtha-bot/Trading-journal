@@ -5,11 +5,17 @@ const storageKeys = {
   settings: "fx-edge-journal.settings.v1",
   accounts: "fx-edge-journal.accounts.v1",
   activeAccount: "fx-edge-journal.active-account.v1",
-  legacyMigrated: "fx-edge-journal.legacy-migrated.v1"
+  legacyMigrated: "fx-edge-journal.legacy-migrated.v1",
+  cloudClientId: "fx-edge-journal.cloud-client-id.v1"
 };
 
 const defaultPair = "XAU/USD";
 const customPairValue = "__add_custom_pair__";
+const supabaseConfig = {
+  url: "https://lzaetartgfejsnwpiezc.supabase.co",
+  publishableKey: "sb_publishable_bfsaovSh71BLeqp7CNQw8Q_Jkg3U4N3"
+};
+const cloudProfileTable = "journal_profiles";
 let equityPeriod = "day";
 let equityChartState = { points: [] };
 let barChartStates = {};
@@ -234,12 +240,24 @@ const defaultSettings = {
 
 let accounts = loadFromStorage(storageKeys.accounts, []);
 if (!Array.isArray(accounts)) accounts = [];
-accounts = accounts.filter((account) => account?.id && account?.name && account?.salt && account?.passwordHash);
+accounts = accounts.filter((account) => account?.id && account?.name && (canLocalSignIn(account) || account?.cloudUserId));
 let activeAccount = null;
 let customPairs = [];
 let settings = { ...defaultSettings };
 let trades = [];
 let strategies = [];
+let supabaseClient = null;
+let cloudSession = null;
+let cloudUser = null;
+let cloudSubscription = null;
+let cloudSaveTimer = null;
+let isApplyingCloudSnapshot = false;
+let cloudClientId = "";
+let cloudSyncState = {
+  label: "Local",
+  detail: "Use email/password to sync this journal between iPhone and PC.",
+  tone: "muted"
+};
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -339,18 +357,22 @@ function migrateLegacyDataToAccount(accountId) {
 
 function saveTrades() {
   localStorage.setItem(accountScopedKey(storageKeys.trades), JSON.stringify(trades));
+  queueCloudSave("trades");
 }
 
 function saveStrategies() {
   localStorage.setItem(accountScopedKey(storageKeys.strategies), JSON.stringify(strategies));
+  queueCloudSave("strategies");
 }
 
 function saveCustomPairs() {
   localStorage.setItem(accountScopedKey(storageKeys.customPairs), JSON.stringify(customPairs));
+  queueCloudSave("pairs");
 }
 
 function saveSettings() {
   localStorage.setItem(accountScopedKey(storageKeys.settings), JSON.stringify(settings));
+  queueCloudSave("settings");
 }
 
 function bytesToHex(bytes) {
@@ -422,6 +444,14 @@ function cleanAccountName(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function canLocalSignIn(account) {
+  return Boolean(account?.salt && account?.passwordHash);
+}
+
+function isCloudAccount(account) {
+  return Boolean(account?.cloudUserId);
+}
+
 function accountById(id) {
   return accounts.find((account) => account.id === id);
 }
@@ -460,45 +490,60 @@ function syncAccountUi() {
   if (name) name.textContent = activeAccount ? activeAccount.name : "Locked";
   const logout = $("#logoutAccountBtn");
   if (logout) logout.disabled = !activeAccount;
+  syncCloudUi();
 }
 
 function populateAccountSelect() {
   const select = $("#loginAccountSelect");
   if (!select) return;
   select.innerHTML = "";
+  const localAccounts = accounts.filter(canLocalSignIn);
 
-  if (!accounts.length) {
+  if (!localAccounts.length) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "Create an account first";
+    option.textContent = "Create a local profile first";
     select.appendChild(option);
     select.disabled = true;
     return;
   }
 
   select.disabled = false;
-  accounts.forEach((account) => {
+  localAccounts.forEach((account) => {
     const option = document.createElement("option");
     option.value = account.id;
     option.textContent = account.name;
     select.appendChild(option);
   });
 
-  const selectedId = activeAccount?.id || safeSessionGet(storageKeys.activeAccount) || accounts[0].id;
-  select.value = accountById(selectedId) ? selectedId : accounts[0].id;
+  const selectedId = canLocalSignIn(activeAccount)
+    ? activeAccount.id
+    : safeSessionGet(storageKeys.activeAccount) || localAccounts[0].id;
+  select.value = localAccounts.some((account) => account.id === selectedId) ? selectedId : localAccounts[0].id;
 }
 
 function setAuthMode(mode = "login") {
-  const resolved = mode === "login" && !accounts.length ? "create" : mode;
+  const localAccounts = accounts.filter(canLocalSignIn);
+  const resolved = mode === "login" && !localAccounts.length ? (supabaseClient ? "cloud" : "create") : mode;
   $$(".auth-tabs .segment").forEach((button) => {
     button.classList.toggle("active", button.dataset.authMode === resolved);
   });
+  const cloudForm = $("#cloudAuthForm");
   const loginForm = $("#loginForm");
   const createForm = $("#createAccountForm");
+  if (cloudForm) cloudForm.classList.toggle("hidden", resolved !== "cloud");
   if (loginForm) loginForm.classList.toggle("hidden", resolved !== "login");
   if (createForm) createForm.classList.toggle("hidden", resolved !== "create");
   const title = $("#authTitle");
-  if (title) title.textContent = resolved === "create" ? "Create Account" : "Open Account";
+  const eyebrow = $("#authEyebrow");
+  if (title) {
+    title.textContent = resolved === "cloud"
+      ? "Cloud Sync"
+      : resolved === "create"
+        ? "Create Account"
+        : "Open Account";
+  }
+  if (eyebrow) eyebrow.textContent = resolved === "cloud" ? "Supabase account" : "Local profiles";
 }
 
 function showAuthOverlay(mode = "login", locked = !activeAccount) {
@@ -548,7 +593,7 @@ function lockAccount(showMessage = true) {
   safeSessionRemove(storageKeys.activeAccount);
   resetAppData();
   refreshAccountWorkspace();
-  showAuthOverlay(accounts.length ? "login" : "create", true);
+  showAuthOverlay(accounts.some(canLocalSignIn) ? "login" : "cloud", true);
   if (showMessage) showToast("Account locked.");
 }
 
@@ -610,8 +655,8 @@ async function handleLogin(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const account = accountById(form.elements.accountId.value);
-  if (!account) {
-    showToast("Create an account first.");
+  if (!account || !canLocalSignIn(account)) {
+    showToast("Create a local profile first.");
     setAuthMode("create");
     return;
   }
@@ -626,6 +671,526 @@ async function handleLogin(event) {
 
   form.reset();
   setActiveAccount(account, `Signed in as ${account.name}.`);
+}
+
+function ensureCloudClientId() {
+  if (cloudClientId) return cloudClientId;
+  cloudClientId = localStorage.getItem(storageKeys.cloudClientId);
+  if (!cloudClientId) {
+    cloudClientId = randomId("cloud-client");
+    localStorage.setItem(storageKeys.cloudClientId, cloudClientId);
+  }
+  return cloudClientId;
+}
+
+function isActiveCloudProfile() {
+  return Boolean(activeAccount?.cloudUserId && cloudUser?.id && activeAccount.cloudUserId === cloudUser.id);
+}
+
+function friendlyCloudError(error) {
+  const message = String(error?.message || error || "Cloud sync failed.");
+  const lower = message.toLowerCase();
+  if (error?.code === "42P01" || lower.includes("relation") || lower.includes(cloudProfileTable)) {
+    return "Run supabase-schema.sql in Supabase SQL Editor first.";
+  }
+  if (lower.includes("invalid login credentials")) return "Email or password is not correct.";
+  if (lower.includes("fetch")) return "Supabase is unreachable. Check internet and the project URL.";
+  return message;
+}
+
+function setCloudStatus(label, detail = "", tone = "muted") {
+  cloudSyncState = { label, detail, tone };
+  syncCloudUi();
+}
+
+function syncCloudUi() {
+  const status = $("#cloudSyncStatus");
+  if (status) {
+    status.textContent = cloudSyncState.label;
+    status.className = `sync-badge ${cloudSyncState.tone || "muted"}`;
+  }
+
+  const note = $("#cloudNote");
+  if (note) note.textContent = cloudSyncState.detail || "Use email/password to sync this journal between iPhone and PC.";
+
+  const signedIn = Boolean(cloudUser);
+  const authButton = $("#openCloudAuthBtn");
+  if (authButton) authButton.hidden = signedIn;
+
+  const sessionPanel = $("#cloudSessionPanel");
+  if (sessionPanel) sessionPanel.classList.toggle("hidden", !signedIn);
+
+  const email = $("#cloudEmail");
+  if (email) email.textContent = signedIn ? cloudUser.email || "Cloud account" : "Not signed in";
+
+  const openButton = $("#openCloudProfileBtn");
+  if (openButton) openButton.disabled = !signedIn || isActiveCloudProfile();
+
+  const migrateButton = $("#migrateCloudBtn");
+  if (migrateButton) migrateButton.disabled = !signedIn || !activeAccount || isActiveCloudProfile();
+
+  const syncButton = $("#syncNowBtn");
+  if (syncButton) syncButton.disabled = !signedIn || !isActiveCloudProfile();
+
+  const signOutButton = $("#cloudSignOutBtn");
+  if (signOutButton) signOutButton.disabled = !signedIn;
+}
+
+function initSupabaseClient() {
+  ensureCloudClientId();
+  if (!supabaseConfig.url || !supabaseConfig.publishableKey || !globalThis.supabase?.createClient) {
+    setCloudStatus("Local", "Cloud library is not loaded. Local profiles still work offline.", "muted");
+    return false;
+  }
+
+  supabaseClient = globalThis.supabase.createClient(supabaseConfig.url, supabaseConfig.publishableKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  });
+  setCloudStatus("Ready", "Sign in with email/password to sync between devices.", "ready");
+  return true;
+}
+
+async function initCloudSession() {
+  if (!supabaseClient) return;
+  try {
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) throw error;
+    await handleCloudSessionChange(data.session, { source: "init" });
+    supabaseClient.auth.onAuthStateChange((_event, session) => {
+      handleCloudSessionChange(session, { source: _event });
+    });
+  } catch (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+  }
+}
+
+function ensureCloudAccount(user) {
+  const id = `cloud-${user.id}`;
+  const email = user.email || "cloud-user";
+  const fallbackName = email.includes("@") ? email.split("@")[0] : "Cloud profile";
+  let account = accountById(id);
+  if (!account) {
+    account = {
+      id,
+      name: fallbackName,
+      cloudUserId: user.id,
+      cloudEmail: email,
+      createdAt: new Date().toISOString()
+    };
+    accounts = [...accounts, account];
+  } else {
+    account.cloudUserId = user.id;
+    account.cloudEmail = email;
+    if (!account.name) account.name = fallbackName;
+  }
+  saveAccounts();
+  return account;
+}
+
+function cloneJson(value, fallback) {
+  try {
+    return JSON.parse(JSON.stringify(value ?? fallback));
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function currentJournalSnapshot(profileName = activeAccount?.name || "Cloud profile") {
+  return {
+    profileName,
+    trades: cloneJson(trades, []),
+    strategies: cloneJson(strategies, []),
+    customPairs: cloneJson(customPairs, []),
+    settings: cloneJson(settings, { ...defaultSettings })
+  };
+}
+
+function normalizeCloudPairs(pairs) {
+  return Array.isArray(pairs)
+    ? pairs
+        .map((pair) => ({
+          symbol: normalizePair(pair.symbol),
+          contractSize: toNumber(pair.contractSize, 1)
+        }))
+        .filter((pair) => pair.symbol && pair.contractSize > 0)
+    : [];
+}
+
+function applyCloudProfileRow(row, message = "") {
+  if (!row) return;
+  isApplyingCloudSnapshot = true;
+  try {
+    if (isActiveCloudProfile() && row.profile_name) {
+      activeAccount.name = row.profile_name;
+      const storedAccount = accountById(activeAccount.id);
+      if (storedAccount) storedAccount.name = row.profile_name;
+      saveAccounts();
+    }
+
+    customPairs = normalizeCloudPairs(row.custom_pairs);
+    settings = {
+      ...defaultSettings,
+      ...(row.settings && typeof row.settings === "object" ? row.settings : {})
+    };
+    analyticsRange = settings.analyticsRange || "all";
+    analyticsCustomStart = settings.analyticsCustomStart || "";
+    analyticsCustomEnd = settings.analyticsCustomEnd || "";
+    marketChartPair = settings.marketChartPair || defaultPair;
+    marketChartInterval = settings.marketChartInterval || "1D";
+    if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
+
+    const incomingTrades = Array.isArray(row.trades) ? row.trades : [];
+    incomingTrades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
+    trades = incomingTrades.map((trade) =>
+      withCalculatedTrade({
+        ...trade,
+        id: trade.id || randomId("trade")
+      })
+    );
+
+    strategies = Array.isArray(row.strategies) ? row.strategies : [];
+    saveCustomPairs();
+    saveSettings();
+    saveTrades();
+    saveStrategies();
+  } finally {
+    isApplyingCloudSnapshot = false;
+  }
+
+  refreshAccountWorkspace();
+  if (message) showToast(message);
+}
+
+function cloudPayloadFromSnapshot(snapshot) {
+  return {
+    user_id: cloudUser.id,
+    profile_name: snapshot.profileName || activeAccount?.name || "Cloud profile",
+    trades: snapshot.trades || [],
+    strategies: snapshot.strategies || [],
+    custom_pairs: snapshot.customPairs || [],
+    settings: snapshot.settings || {},
+    updated_at: new Date().toISOString(),
+    client_id: ensureCloudClientId()
+  };
+}
+
+async function upsertCloudSnapshot(snapshot = currentJournalSnapshot(), reason = "save") {
+  if (!supabaseClient || !cloudUser) return false;
+  setCloudStatus("Syncing", reason === "migration" ? "Uploading local profile to cloud." : "Saving latest journal to cloud.", "pending");
+  const { error } = await supabaseClient
+    .from(cloudProfileTable)
+    .upsert(cloudPayloadFromSnapshot(snapshot), { onConflict: "user_id" });
+
+  if (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+    throw error;
+  }
+
+  setCloudStatus("Synced", `Last saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`, "success");
+  return true;
+}
+
+function queueCloudSave(reason = "save") {
+  if (isApplyingCloudSnapshot || !isActiveCloudProfile() || !supabaseClient || !cloudUser) return;
+  clearTimeout(cloudSaveTimer);
+  setCloudStatus("Queued", "Saving your latest edit to cloud.", "pending");
+  cloudSaveTimer = setTimeout(() => {
+    upsertCloudSnapshot(currentJournalSnapshot(), reason).catch(() => {});
+  }, 650);
+}
+
+async function fetchCloudProfile(options = {}) {
+  const { apply = true, createIfMissing = true, silent = false } = options;
+  if (!supabaseClient || !cloudUser) return null;
+  if (!silent) setCloudStatus("Syncing", "Loading latest cloud journal.", "pending");
+
+  const { data, error } = await supabaseClient
+    .from(cloudProfileTable)
+    .select("*")
+    .eq("user_id", cloudUser.id)
+    .maybeSingle();
+
+  if (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+    throw error;
+  }
+
+  if (data) {
+    if (apply && isActiveCloudProfile()) applyCloudProfileRow(data);
+    setCloudStatus("Synced", "Cloud journal is up to date on this device.", "success");
+    return data;
+  }
+
+  if (createIfMissing && isActiveCloudProfile()) {
+    await upsertCloudSnapshot(currentJournalSnapshot(activeAccount.name), "initial");
+  } else {
+    setCloudStatus("Ready", "No cloud journal found yet. Migrate a local profile or open cloud.", "ready");
+  }
+  return null;
+}
+
+function subscribeCloudProfile() {
+  if (!supabaseClient || !cloudUser) return;
+  if (cloudSubscription) supabaseClient.removeChannel(cloudSubscription);
+  cloudSubscription = supabaseClient
+    .channel(`journal-profile-${cloudUser.id}-${ensureCloudClientId()}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: cloudProfileTable,
+        filter: `user_id=eq.${cloudUser.id}`
+      },
+      (payload) => {
+        const row = payload.new;
+        if (!row || row.client_id === cloudClientId) return;
+        if (isActiveCloudProfile()) {
+          applyCloudProfileRow(row, "Cloud update received from another device.");
+          setCloudStatus("Synced", "Updated from another device.", "success");
+        } else {
+          setCloudStatus("Updated", "Cloud has new data. Open Cloud to view it.", "pending");
+        }
+      }
+    )
+    .subscribe((status) => {
+      if (status === "SUBSCRIBED" && isActiveCloudProfile()) {
+        setCloudStatus("Live", "Realtime sync is listening for iPhone and PC changes.", "success");
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        setCloudStatus("Error", "Realtime sync could not start. Check Supabase Realtime setup.", "error");
+      }
+    });
+}
+
+async function openCloudProfile(options = {}) {
+  const { silent = false } = options;
+  if (!cloudUser) {
+    showAuthOverlay("cloud", false);
+    return;
+  }
+  const account = ensureCloudAccount(cloudUser);
+  setActiveAccount(account, silent ? "" : "Cloud profile opened.");
+  subscribeCloudProfile();
+  try {
+    await fetchCloudProfile({ apply: true, createIfMissing: true, silent });
+  } catch (error) {
+    showToast(friendlyCloudError(error));
+  }
+}
+
+async function migrateActiveAccountToCloud() {
+  if (!cloudUser) {
+    showAuthOverlay("cloud", false);
+    return;
+  }
+  if (!activeAccount) {
+    showToast("Open a local profile before migrating.");
+    return;
+  }
+  if (isActiveCloudProfile()) {
+    showToast("This profile is already using cloud sync.");
+    return;
+  }
+
+  const ok = confirm("Upload this local profile to your Supabase cloud journal? This replaces the current cloud journal for this email.");
+  if (!ok) return;
+
+  const snapshot = currentJournalSnapshot(activeAccount.name);
+  try {
+    await upsertCloudSnapshot(snapshot, "migration");
+    const account = ensureCloudAccount(cloudUser);
+    setActiveAccount(account, "Local profile migrated to cloud.");
+    applyCloudProfileRow({
+      profile_name: snapshot.profileName,
+      trades: snapshot.trades,
+      strategies: snapshot.strategies,
+      custom_pairs: snapshot.customPairs,
+      settings: snapshot.settings,
+      client_id: ensureCloudClientId()
+    });
+    subscribeCloudProfile();
+  } catch (error) {
+    showToast(friendlyCloudError(error));
+  }
+}
+
+async function handleCloudSessionChange(session, options = {}) {
+  cloudSession = session || null;
+  cloudUser = cloudSession?.user || null;
+  if (!cloudUser) {
+    if (cloudSubscription) {
+      supabaseClient.removeChannel(cloudSubscription);
+      cloudSubscription = null;
+    }
+    setCloudStatus("Ready", "Sign in with email/password to sync between devices.", "ready");
+    return;
+  }
+
+  ensureCloudAccount(cloudUser);
+  subscribeCloudProfile();
+  if (!activeAccount || (isCloudAccount(activeAccount) && activeAccount.cloudUserId === cloudUser.id)) {
+    await openCloudProfile({ silent: options.source === "init" });
+    return;
+  }
+
+  setCloudStatus("Ready", "Cloud signed in. Migrate Local to upload this profile, or Open to use cloud data.", "ready");
+  syncCloudUi();
+}
+
+function cloudAuthValues(form) {
+  const email = String(form.elements.email.value || "").trim().toLowerCase();
+  const password = form.elements.password.value;
+  if (!email || !email.includes("@")) throw new Error("Enter your email address.");
+  if (password.length < 6) throw new Error("Use at least 6 password characters for cloud login.");
+  return { email, password };
+}
+
+async function handleCloudSignIn(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!supabaseClient) {
+    showToast("Cloud sync is not loaded yet.");
+    return;
+  }
+
+  try {
+    const { email, password } = cloudAuthValues(form);
+    setCloudStatus("Signing in", "Checking Supabase email/password.", "pending");
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    form.elements.password.value = "";
+    await handleCloudSessionChange(data.session, { source: "signIn" });
+    hideAuthOverlay();
+    showToast(isActiveCloudProfile() ? "Cloud sync active." : "Cloud signed in. Migrate or open cloud when ready.");
+  } catch (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+    showToast(friendlyCloudError(error));
+  }
+}
+
+async function handleCloudSignUp(event) {
+  const form = event.currentTarget.closest("form");
+  if (!supabaseClient || !form) {
+    showToast("Cloud sync is not loaded yet.");
+    return;
+  }
+
+  try {
+    const { email, password } = cloudAuthValues(form);
+    setCloudStatus("Creating", "Creating Supabase email/password account.", "pending");
+    const { data, error } = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: window.location.href.split("#")[0]
+      }
+    });
+    if (error) throw error;
+    form.elements.password.value = "";
+    if (data.session) {
+      await handleCloudSessionChange(data.session, { source: "signUp" });
+      hideAuthOverlay();
+      showToast("Cloud account created.");
+      return;
+    }
+    setCloudStatus("Confirm", "Check your email, confirm the account, then sign in here.", "pending");
+    showToast("Check your email to confirm, then sign in.");
+  } catch (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+    showToast(friendlyCloudError(error));
+  }
+}
+
+async function handleCloudSignOut() {
+  if (!supabaseClient || !cloudUser) return;
+  const wasCloudProfile = isActiveCloudProfile();
+  try {
+    await supabaseClient.auth.signOut();
+    if (wasCloudProfile) lockAccount(false);
+    setCloudStatus("Ready", "Signed out of cloud. Local profiles still work offline.", "ready");
+    showToast("Cloud signed out.");
+  } catch (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+    showToast(friendlyCloudError(error));
+  }
+}
+
+function timeInZone(timeZone, date = new Date()) {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(date);
+  } catch (error) {
+    return "--:--";
+  }
+}
+
+function timeZoneOffsetMinutes(timeZone, date = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: "shortOffset",
+      hour: "2-digit"
+    }).formatToParts(date);
+    const zone = parts.find((part) => part.type === "timeZoneName")?.value || "";
+    if (zone === "GMT" || zone === "UTC") return 0;
+    const match = zone.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+    if (!match) return null;
+    const sign = match[1] === "-" ? -1 : 1;
+    const hours = Number(match[2] || 0);
+    const minutes = Number(match[3] || 0);
+    return sign * (hours * 60 + minutes);
+  } catch (error) {
+    return null;
+  }
+}
+
+function daylightSavingStatus(timeZone, date = new Date()) {
+  const year = date.getFullYear();
+  const current = timeZoneOffsetMinutes(timeZone, date);
+  const january = timeZoneOffsetMinutes(timeZone, new Date(Date.UTC(year, 0, 1, 12)));
+  const july = timeZoneOffsetMinutes(timeZone, new Date(Date.UTC(year, 6, 1, 12)));
+  if (current === null || january === null || july === null || january === july) {
+    return { active: false, label: "No DST" };
+  }
+  const dstOffset = Math.max(january, july);
+  return { active: current === dstOffset, label: current === dstOffset ? "DST On" : "DST Off" };
+}
+
+function renderDstWidget() {
+  const list = $("#dstList");
+  const clock = $("#dstLocalClock");
+  if (!list || !clock) return;
+  const now = new Date();
+  clock.textContent = timeInZone("Asia/Bangkok", now);
+  const markets = [
+    { name: "New York", zone: "America/New_York" },
+    { name: "London", zone: "Europe/London" },
+    { name: "Sydney", zone: "Australia/Sydney" }
+  ];
+
+  list.innerHTML = markets
+    .map((market) => {
+      const status = daylightSavingStatus(market.zone, now);
+      return `
+        <div class="dst-row">
+          <div>
+            <strong>${escapeHtml(market.name)}</strong>
+            <span>${escapeHtml(timeInZone(market.zone, now))}</span>
+          </div>
+          <span class="dst-badge ${status.active ? "active" : ""}">${escapeHtml(status.label)}</span>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 function toNumber(value, fallback = 0) {
@@ -3010,7 +3575,7 @@ function bindEvents() {
   const switchAccountButton = $("#switchAccountBtn");
   if (switchAccountButton) {
     switchAccountButton.addEventListener("click", () => {
-      showAuthOverlay(accounts.length ? "login" : "create", false);
+      showAuthOverlay(accounts.some(canLocalSignIn) ? "login" : "cloud", false);
     });
   }
 
@@ -3029,6 +3594,31 @@ function bindEvents() {
 
   const createAccountForm = $("#createAccountForm");
   if (createAccountForm) createAccountForm.addEventListener("submit", handleCreateAccount);
+
+  const cloudAuthForm = $("#cloudAuthForm");
+  if (cloudAuthForm) cloudAuthForm.addEventListener("submit", handleCloudSignIn);
+
+  const cloudSignUpButton = $("#cloudSignUpBtn");
+  if (cloudSignUpButton) cloudSignUpButton.addEventListener("click", handleCloudSignUp);
+
+  const openCloudAuthButton = $("#openCloudAuthBtn");
+  if (openCloudAuthButton) openCloudAuthButton.addEventListener("click", () => showAuthOverlay("cloud", false));
+
+  const openCloudProfileButton = $("#openCloudProfileBtn");
+  if (openCloudProfileButton) openCloudProfileButton.addEventListener("click", () => openCloudProfile());
+
+  const migrateCloudButton = $("#migrateCloudBtn");
+  if (migrateCloudButton) migrateCloudButton.addEventListener("click", migrateActiveAccountToCloud);
+
+  const syncNowButton = $("#syncNowBtn");
+  if (syncNowButton) {
+    syncNowButton.addEventListener("click", () => {
+      fetchCloudProfile({ apply: true, createIfMissing: true }).catch((error) => showToast(friendlyCloudError(error)));
+    });
+  }
+
+  const cloudSignOutButton = $("#cloudSignOutBtn");
+  if (cloudSignOutButton) cloudSignOutButton.addEventListener("click", handleCloudSignOut);
 
   const authOverlay = $("#authOverlay");
   if (authOverlay) {
@@ -3279,6 +3869,7 @@ function bindEvents() {
 }
 
 function bootstrap() {
+  initSupabaseClient();
   initAccountSession();
   renderPairOptions(defaultPair);
   renderMarketChartOptions(marketChartPair);
@@ -3287,10 +3878,13 @@ function bootstrap() {
   render();
   renderTradingViewWidget();
   syncAccountUi();
+  renderDstWidget();
+  setInterval(renderDstWidget, 60000);
   if (!activeAccount) {
-    showAuthOverlay(accounts.length ? "login" : "create", true);
+    showAuthOverlay(accounts.some(canLocalSignIn) ? "login" : "cloud", true);
   }
   registerServiceWorker();
+  initCloudSession();
 }
 
 bootstrap();

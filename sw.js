@@ -1,4 +1,4 @@
-const CACHE_NAME = "fx-edge-journal-v20";
+const CACHE_NAME = "fx-edge-journal-v22";
 const APP_FILES = [
   "./",
   "./index.html",

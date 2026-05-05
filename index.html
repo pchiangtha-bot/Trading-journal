@@ -39,6 +39,41 @@
         </div>
       </section>
 
+      <section class="cloud-panel" aria-labelledby="cloud-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Cloud Sync</p>
+            <h2 id="cloud-title">Supabase</h2>
+          </div>
+          <span class="sync-badge muted" id="cloudSyncStatus">Local</span>
+        </div>
+        <button class="tool-button cloud-login-button" type="button" id="openCloudAuthBtn">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          Email Sync
+        </button>
+        <div class="cloud-session hidden" id="cloudSessionPanel">
+          <p id="cloudEmail">Not signed in</p>
+          <div class="cloud-actions">
+            <button class="mini-button text-mini" type="button" id="openCloudProfileBtn">Open</button>
+            <button class="mini-button text-mini" type="button" id="migrateCloudBtn">Migrate</button>
+            <button class="mini-button text-mini" type="button" id="syncNowBtn">Sync</button>
+            <button class="mini-button text-mini danger" type="button" id="cloudSignOutBtn">Out</button>
+          </div>
+        </div>
+        <p class="cloud-note" id="cloudNote">Use email/password to sync this journal between iPhone and PC.</p>
+      </section>
+
+      <section class="dst-panel" aria-labelledby="dst-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Daylight Saving</p>
+            <h2 id="dst-title">Session Clock</h2>
+          </div>
+          <span id="dstLocalClock">--:--</span>
+        </div>
+        <div class="dst-list" id="dstList"></div>
+      </section>
+
       <nav class="nav-tabs" aria-label="Primary">
         <button class="nav-tab active" data-view="journal">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -66,6 +101,10 @@
             </a>
             <a class="icon-button link-button" href="https://www.tradingview.com/chart/" target="_blank" rel="noopener noreferrer" title="Open TradingView" aria-label="Open TradingView">
               <img class="site-icon" src="https://www.tradingview.com/favicon.ico" alt="" aria-hidden="true">
+            </a>
+            <a class="icon-button link-button" href="https://www.metatrader5.com/en/download" target="_blank" rel="noopener noreferrer" title="Open MetaTrader 5" aria-label="Open MetaTrader 5">
+              <img class="site-icon" src="https://www.metatrader5.com/favicon.ico" alt="" aria-hidden="true">
+              <span class="sr-only">MT5</span>
             </a>
           </div>
         </div>
@@ -738,7 +777,7 @@
     <section class="auth-card">
       <div class="panel-header">
         <div>
-          <p class="eyebrow">Local profiles</p>
+          <p class="eyebrow" id="authEyebrow">Accounts</p>
           <h2 id="authTitle">Open Account</h2>
         </div>
         <button class="icon-button" type="button" id="closeAuthBtn" title="Close" aria-label="Close account panel">
@@ -747,9 +786,23 @@
       </div>
 
       <div class="auth-tabs segmented" aria-label="Account action">
-        <button class="segment active" type="button" data-auth-mode="login">Sign in</button>
+        <button class="segment active" type="button" data-auth-mode="cloud">Cloud</button>
+        <button class="segment" type="button" data-auth-mode="login">Local</button>
         <button class="segment" type="button" data-auth-mode="create">Create</button>
       </div>
+
+      <form class="auth-form" id="cloudAuthForm">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" autocomplete="email" placeholder="you@example.com" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" placeholder="Cloud password" required>
+        </label>
+        <button class="primary-button" type="submit">Sign In With Email</button>
+        <button class="tool-button" type="button" id="cloudSignUpBtn">Create Cloud Account</button>
+      </form>
 
       <form class="auth-form" id="loginForm">
         <label>
@@ -779,12 +832,13 @@
         <button class="primary-button" type="submit">Create Account</button>
       </form>
 
-      <p class="auth-note">Profiles keep trades, strategies, custom pairs, and settings separated on this device. This is local app access, not cloud-grade account security.</p>
+      <p class="auth-note">Cloud email/password sync uses Supabase Auth. Local profiles still work offline and can be migrated into your cloud journal.</p>
     </section>
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
 </body>
 </html>
