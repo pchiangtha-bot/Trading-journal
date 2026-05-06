@@ -57,6 +57,70 @@ function cleanDirection(value: unknown) {
   return String(value || "").toLowerCase() === "sell" ? "Sell" : "Buy";
 }
 
+function cleanRecordKey(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function uniqueRecordKeys(values: unknown[]) {
+  return [...new Set(values.map(cleanRecordKey).filter(Boolean))];
+}
+
+function mt5RecordKeys(record: Record<string, unknown>, payload: Record<string, unknown>) {
+  return uniqueRecordKeys([
+    record.external_id,
+    payload.external_id,
+    payload.position_id,
+    payload.order_id,
+    payload.ticket,
+    payload.exit_ticket,
+    payload.deal_ticket,
+    payload.close_ticket,
+    payload.closed_ticket
+  ]);
+}
+
+function tradeRecordKeys(trade: Record<string, unknown>) {
+  return uniqueRecordKeys([
+    trade.mt5ExternalId,
+    trade.mt5_external_id,
+    trade.externalId,
+    trade.external_id,
+    trade.mt5PositionId,
+    trade.mt5_position_id,
+    trade.positionId,
+    trade.position_id,
+    trade.mt5DealId,
+    trade.mt5_deal_id,
+    trade.dealTicket,
+    trade.deal_ticket,
+    trade.ticket
+  ]);
+}
+
+function tradeNotesHaveKey(trade: Record<string, unknown>, keys: string[]) {
+  const notes = String(trade.notes || "").toLowerCase();
+  return keys.some((key) => key.length >= 4 && notes.includes(key.toLowerCase()));
+}
+
+async function journalAlreadyHasMt5Record(supabase: any, userId: string, keys: string[]) {
+  if (!keys.length) return { duplicate: false };
+  const { data: profile, error } = await supabase
+    .from("journal_profiles")
+    .select("trades")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) return { duplicate: false, error: error.message };
+  const profileTrades = Array.isArray(profile?.trades) ? profile.trades : [];
+  const keySet = new Set(keys.map((key) => key.toLowerCase()));
+  const duplicate = profileTrades.some((trade: unknown) => {
+    if (!trade || typeof trade !== "object") return false;
+    const row = trade as Record<string, unknown>;
+    const rowKeys = tradeRecordKeys(row).map((key) => key.toLowerCase());
+    return rowKeys.some((key) => keySet.has(key)) || tradeNotesHaveKey(row, keys);
+  });
+  return { duplicate };
+}
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Use POST." }, 405);
@@ -168,6 +232,16 @@ Deno.serve(async (req) => {
     raw: payload,
     updated_at: new Date().toISOString()
   };
+
+  const duplicateCheck = await journalAlreadyHasMt5Record(supabase, bridge.user_id, mt5RecordKeys(record, payload));
+  if (duplicateCheck.error) return jsonResponse({ error: duplicateCheck.error }, 500);
+  if (duplicateCheck.duplicate) {
+    await supabase
+      .from("mt5_bridge_tokens")
+      .update({ last_used_at: new Date().toISOString() })
+      .eq("id", bridge.id);
+    return jsonResponse({ ok: true, duplicate: true, already_recorded: true });
+  }
 
   const { data: inserted, error: insertError } = await supabase
     .from("mt5_detected_orders")

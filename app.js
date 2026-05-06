@@ -1195,7 +1195,7 @@ async function fetchMt5DetectedOrders(options = {}) {
     .eq("user_id", cloudUser.id)
     .eq("status", "new")
     .order("closed_at", { ascending: false })
-    .limit(20);
+    .limit(40);
 
   if (error) {
     if (!silent) showToast(friendlyCloudError(error));
@@ -1203,9 +1203,15 @@ async function fetchMt5DetectedOrders(options = {}) {
   }
 
   const previousCount = mt5DetectedOrders.length;
-  mt5DetectedOrders = Array.isArray(data) ? data : [];
+  const fetchedOrders = Array.isArray(data) ? data : [];
+  const { visibleOrders, duplicateCount } = await skipRecordedMt5Orders(fetchedOrders, { silent });
+  mt5DetectedOrders = visibleOrders;
   renderMt5Inbox();
-  if (mt5DetectedOrders.length > previousCount && !silent) showToast("MT5 closed position detected.");
+  if (duplicateCount && !silent) {
+    showToast(`${duplicateCount} MT5 ${duplicateCount === 1 ? "order is" : "orders are"} already in Trade History and skipped.`);
+  } else if (mt5DetectedOrders.length > previousCount && !silent) {
+    showToast("MT5 closed position detected.");
+  }
 }
 
 function mt5OrderById(id) {
@@ -1239,6 +1245,88 @@ function mt5OrderRaw(order) {
   return order?.raw && typeof order.raw === "object" ? order.raw : {};
 }
 
+function cleanMt5Key(value) {
+  return String(value ?? "").trim();
+}
+
+function uniqueMt5Keys(values) {
+  return [...new Set(values.map(cleanMt5Key).filter(Boolean))];
+}
+
+function mt5OrderExternalKeys(order) {
+  const raw = mt5OrderRaw(order);
+  return uniqueMt5Keys([
+    order?.external_id,
+    raw.external_id,
+    order?.position_id,
+    raw.position_id,
+    order?.order_id,
+    raw.order_id,
+    order?.ticket,
+    raw.ticket,
+    raw.exit_ticket,
+    raw.deal_ticket,
+    raw.close_ticket,
+    raw.closed_ticket
+  ]);
+}
+
+function tradeMt5ExternalKeys(trade) {
+  return uniqueMt5Keys([
+    trade?.mt5ExternalId,
+    trade?.mt5_external_id,
+    trade?.externalId,
+    trade?.external_id,
+    trade?.mt5PositionId,
+    trade?.mt5_position_id,
+    trade?.positionId,
+    trade?.position_id,
+    trade?.mt5DealId,
+    trade?.mt5_deal_id,
+    trade?.dealTicket,
+    trade?.deal_ticket,
+    trade?.ticket
+  ]);
+}
+
+function tradeNotesMentionMt5Keys(trade, keys) {
+  const notes = String(trade?.notes || "").toLowerCase();
+  return keys.some((key) => key.length >= 4 && notes.includes(key.toLowerCase()));
+}
+
+function isMt5OrderAlreadyRecorded(order) {
+  const orderKeys = mt5OrderExternalKeys(order);
+  if (!orderKeys.length) return false;
+  const orderKeySet = new Set(orderKeys.map((key) => key.toLowerCase()));
+  return trades.some((trade) => {
+    const tradeKeys = tradeMt5ExternalKeys(trade).map((key) => key.toLowerCase());
+    return tradeKeys.some((key) => orderKeySet.has(key)) || tradeNotesMentionMt5Keys(trade, orderKeys);
+  });
+}
+
+async function skipRecordedMt5Orders(orders, options = {}) {
+  const { silent = false } = options;
+  const duplicateIds = [];
+  const visibleOrders = [];
+
+  orders.forEach((order) => {
+    if (isMt5OrderAlreadyRecorded(order)) duplicateIds.push(order.id);
+    else visibleOrders.push(order);
+  });
+
+  const cleanIds = duplicateIds.filter(Boolean);
+  if (cleanIds.length && supabaseClient && cloudUser) {
+    const { error } = await supabaseClient
+      .from(mt5OrderTable)
+      .update({ status: "recorded", updated_at: new Date().toISOString() })
+      .eq("user_id", cloudUser.id)
+      .in("id", cleanIds);
+    if (error && !silent) showToast(friendlyCloudError(error));
+  }
+
+  return { visibleOrders, duplicateCount: cleanIds.length };
+}
+
 function mt5OrderSource(order) {
   const raw = mt5OrderRaw(order);
   const platform = String(raw.client_platform || raw.platform || raw.mobile_engine || raw.source || "").toLowerCase();
@@ -1256,6 +1344,7 @@ function mt5SourceClass(source) {
 
 function mt5OrderToTrade(order) {
   const pair = normalizeBrokerSymbol(order.symbol);
+  const raw = mt5OrderRaw(order);
   const source = mt5OrderSource(order);
   ensurePairAvailable(pair, order.contract_size);
   const closedAt = order.closed_at ? new Date(order.closed_at) : new Date();
@@ -1285,6 +1374,12 @@ function mt5OrderToTrade(order) {
     id: randomId("trade"),
     date: validOpenedAt ? localDateKey(openedAt) : validClosedAt ? localDateKey(closedAt) : localDateKey(),
     openTime: validOpenedAt ? localTimeKey(openedAt) : "",
+    mt5ExternalId: cleanMt5Key(order.external_id),
+    mt5PositionId: cleanMt5Key(order.position_id || raw.position_id || raw.order_id || raw.ticket),
+    mt5DealId: cleanMt5Key(raw.exit_ticket || raw.deal_ticket || raw.close_ticket || raw.closed_ticket),
+    mt5BrokerAccount: cleanMt5Key(order.broker_account),
+    mt5BrokerServer: cleanMt5Key(order.broker_server),
+    mt5Source: source,
     pair,
     session: "",
     direction,
@@ -1328,6 +1423,11 @@ function mt5OrderToTrade(order) {
 function prefillTradeFromMt5Order(orderId) {
   const order = mt5OrderById(orderId);
   if (!order) return;
+  if (isMt5OrderAlreadyRecorded(order)) {
+    markMt5OrderStatus(order.id, "recorded");
+    showToast("This MT5 order is already in Trade History, so it was skipped.");
+    return;
+  }
   const trade = mt5OrderToTrade(order);
   pendingMt5OrderId = order.id;
   fillTradeForm(trade);
@@ -3974,6 +4074,12 @@ function exportCsv() {
   const headers = [
     "date",
     "openTime",
+    "mt5ExternalId",
+    "mt5PositionId",
+    "mt5DealId",
+    "mt5BrokerAccount",
+    "mt5BrokerServer",
+    "mt5Source",
     "pair",
     "session",
     "direction",
