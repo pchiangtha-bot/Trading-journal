@@ -63,6 +63,15 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       MarkSent(dedupeKey);
   }
 
+int ServerUtcOffsetMinutes()
+  {
+   datetime serverTime = TimeTradeServer();
+   datetime gmtTime = TimeGMT();
+   if(serverTime <= 0 || gmtTime <= 0)
+      return(0);
+   return((int)MathRound((double)(serverTime - gmtTime) / 60.0));
+  }
+
 bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeKey, string source, string historyRequestId)
   {
    if(BridgeToken == "" || WebhookUrl == "")
@@ -163,6 +172,7 @@ bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeK
    long login = AccountInfoInteger(ACCOUNT_LOGIN);
    string externalId = IntegerToString(login) + "-" + IntegerToString((long)positionId);
    dedupeKey = externalId + "-" + IntegerToString((long)exitDeal);
+   int serverUtcOffsetMinutes = ServerUtcOffsetMinutes();
 
    payload = "{";
    payload += "\"external_id\":\"" + JsonEscape(dedupeKey) + "\",";
@@ -170,6 +180,7 @@ bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeK
    payload += "\"broker_server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\",";
    payload += "\"broker_company\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\",";
    payload += "\"source\":\"" + JsonEscape(source) + "\",";
+   payload += "\"server_utc_offset_minutes\":" + IntegerToString(serverUtcOffsetMinutes) + ",";
    payload += "\"symbol\":\"" + JsonEscape(symbol) + "\",";
    payload += "\"direction\":\"" + JsonEscape(direction) + "\",";
    payload += "\"position_id\":\"" + JsonEscape(IntegerToString((long)positionId)) + "\",";
