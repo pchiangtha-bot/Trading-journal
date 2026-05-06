@@ -261,6 +261,7 @@ let cloudClientId = "";
 let mt5DetectedOrders = [];
 let pendingMt5OrderId = "";
 let latestMt5BridgeSetup = "";
+let mt5HistoryReviewRange = { active: false, start: "", end: "" };
 let cloudSyncState = {
   label: "Local",
   detail: "Use email/password to sync this journal between iPhone and PC.",
@@ -1075,15 +1076,31 @@ function syncMt5HistoryControls() {
   if (!endInput.value) endInput.value = defaults.end;
 }
 
+function mt5HistoryRangeFromControls() {
+  syncMt5HistoryControls();
+  return {
+    start: $("#mt5HistoryStart")?.value || "",
+    end: $("#mt5HistoryEnd")?.value || ""
+  };
+}
+
+function mt5HistoryDateBounds(range = mt5HistoryReviewRange) {
+  if (!range.start || !range.end) return { startIso: "", endIso: "" };
+  const start = new Date(`${range.start}T00:00:00`);
+  const end = new Date(`${range.end}T23:59:59.999`);
+  return {
+    startIso: Number.isNaN(start.getTime()) ? "" : start.toISOString(),
+    endIso: Number.isNaN(end.getTime()) ? "" : end.toISOString()
+  };
+}
+
 async function createMt5HistoryRequest() {
   if (!supabaseClient || !cloudUser) {
     showAuthOverlay("cloud", false);
     return;
   }
 
-  syncMt5HistoryControls();
-  const startDate = $("#mt5HistoryStart")?.value || "";
-  const endDate = $("#mt5HistoryEnd")?.value || "";
+  const { start: startDate, end: endDate } = mt5HistoryRangeFromControls();
   if (!startDate || !endDate) {
     showToast("Choose the MT5 history start and end dates.");
     return;
@@ -1092,6 +1109,8 @@ async function createMt5HistoryRequest() {
     showToast("History start date must be before end date.");
     return;
   }
+
+  mt5HistoryReviewRange = { active: true, start: startDate, end: endDate };
 
   const { error } = await supabaseClient.from(mt5HistoryRequestTable).insert({
     user_id: cloudUser.id,
@@ -1114,7 +1133,8 @@ async function createMt5HistoryRequest() {
   ].join("\n");
   const output = $("#mt5BridgeOutput");
   if (output) output.value = latestMt5BridgeSetup;
-  showToast("History sync request created. MT5 bridge will upload it when online.");
+  await fetchMt5DetectedOrders({ historyReview: true });
+  showToast("History display activated. MT5 bridge will upload missing orders when online.");
 }
 
 async function generateMt5BridgeToken(source = "desktop") {
@@ -1182,20 +1202,31 @@ function subscribeMt5Orders() {
 }
 
 async function fetchMt5DetectedOrders(options = {}) {
-  const { silent = false } = options;
+  const { silent = false, historyReview = false } = options;
   if (!supabaseClient || !cloudUser) {
     mt5DetectedOrders = [];
     renderMt5Inbox();
     return;
   }
 
-  const { data, error } = await supabaseClient
+  const reviewMode = historyReview || mt5HistoryReviewRange.active;
+  let query = supabaseClient
     .from(mt5OrderTable)
     .select("*")
     .eq("user_id", cloudUser.id)
-    .eq("status", "new")
     .order("closed_at", { ascending: false })
-    .limit(40);
+    .limit(reviewMode ? 200 : 40);
+
+  if (reviewMode) {
+    const { startIso, endIso } = mt5HistoryDateBounds();
+    query = query.in("status", ["new", "recorded", "ignored"]);
+    if (startIso) query = query.gte("closed_at", startIso);
+    if (endIso) query = query.lte("closed_at", endIso);
+  } else {
+    query = query.eq("status", "new");
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     if (!silent) showToast(friendlyCloudError(error));
@@ -1204,6 +1235,16 @@ async function fetchMt5DetectedOrders(options = {}) {
 
   const previousCount = mt5DetectedOrders.length;
   const fetchedOrders = Array.isArray(data) ? data : [];
+  if (reviewMode) {
+    mt5DetectedOrders = fetchedOrders.map((order) => ({
+      ...order,
+      alreadyRecorded: isMt5OrderAlreadyRecorded(order)
+    }));
+    renderMt5Inbox();
+    if (!silent) showToast(`History display loaded ${mt5DetectedOrders.length} ${mt5DetectedOrders.length === 1 ? "order" : "orders"}.`);
+    return;
+  }
+
   const { visibleOrders, duplicateCount } = await skipRecordedMt5Orders(fetchedOrders, { silent });
   mt5DetectedOrders = visibleOrders;
   renderMt5Inbox();
@@ -1474,6 +1515,7 @@ function renderMt5Inbox() {
       const takeProfit = parseOptionalNumber(order.take_profit);
       const stopText = stopLoss && stopLoss > 0 ? rateFormatter.format(stopLoss) : "Not sent";
       const targetText = takeProfit && takeProfit > 0 ? rateFormatter.format(takeProfit) : "Not sent";
+      const alreadyRecorded = Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order));
       return `
         <article class="mt5-order-card">
           <div>
@@ -1485,7 +1527,8 @@ function renderMt5Inbox() {
             <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Stop ${escapeHtml(stopText)} | Target ${escapeHtml(targetText)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
           </div>
           <div class="mt5-order-actions">
-            <button class="mini-button text-mini" type="button" data-mt5-action="record" data-id="${escapeHtml(order.id)}">Record</button>
+            ${alreadyRecorded ? '<span class="mt5-recorded-flag">Already recorded</span>' : ""}
+            <button class="mini-button text-mini" type="button" data-mt5-action="record" data-id="${escapeHtml(order.id)}" ${alreadyRecorded ? "disabled" : ""}>${alreadyRecorded ? "Recorded" : "Record"}</button>
             <button class="mini-button text-mini danger" type="button" data-mt5-action="ignore" data-id="${escapeHtml(order.id)}">Ignore</button>
           </div>
         </article>

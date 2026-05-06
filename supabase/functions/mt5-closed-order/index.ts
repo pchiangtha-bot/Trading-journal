@@ -236,6 +236,12 @@ Deno.serve(async (req) => {
   const duplicateCheck = await journalAlreadyHasMt5Record(supabase, bridge.user_id, mt5RecordKeys(record, payload));
   if (duplicateCheck.error) return jsonResponse({ error: duplicateCheck.error }, 500);
   if (duplicateCheck.duplicate) {
+    const recordedRecord = { ...record, status: "recorded", updated_at: new Date().toISOString() };
+    const { error: upsertRecordedError } = await supabase
+      .from("mt5_detected_orders")
+      .upsert(recordedRecord, { onConflict: "user_id,external_id" });
+    if (upsertRecordedError) return jsonResponse({ error: upsertRecordedError.message }, 500);
+
     await supabase
       .from("mt5_bridge_tokens")
       .update({ last_used_at: new Date().toISOString() })
@@ -245,7 +251,7 @@ Deno.serve(async (req) => {
 
   const { data: inserted, error: insertError } = await supabase
     .from("mt5_detected_orders")
-    .insert(record)
+    .upsert(record, { onConflict: "user_id,external_id" })
     .select("id")
     .single();
 
@@ -254,10 +260,7 @@ Deno.serve(async (req) => {
     .update({ last_used_at: new Date().toISOString() })
     .eq("id", bridge.id);
 
-  if (insertError) {
-    if (insertError.code === "23505") return jsonResponse({ ok: true, duplicate: true });
-    return jsonResponse({ error: insertError.message }, 500);
-  }
+  if (insertError) return jsonResponse({ error: insertError.message }, 500);
 
   return jsonResponse({ ok: true, id: inserted.id });
 });

@@ -227,7 +227,7 @@ button {
 
 .bridge-action-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -257,6 +257,30 @@ button {
   min-height: 34px;
   padding: 0 8px;
   font-size: 0.76rem;
+}
+
+.history-display-button {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 34px;
+}
+
+.mt5-recorded-flag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: var(--teal);
+  background: var(--teal-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.mini-button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .mobile-engine-strip {

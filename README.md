@@ -93,6 +93,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - MT5 history sync requests from PC or iPhone, executed when an MT5 desktop bridge is online
 - Sortable trade history headers with opening time support keep the journal ordered by real execution timing.
 - MT5 history duplicate guard skips orders already saved in Trade History before they appear as new inbox records.
+- History display can show previously recorded MT5 orders for a chosen period, marking records that are still in Trade History and allowing deleted ones to be recorded again.
 - MT5 mobile closed-position relay setup for Android/iOS payloads into the same realtime inbox
 
 ## Market Chart Notes
