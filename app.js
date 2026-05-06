@@ -1220,8 +1220,8 @@ async function fetchMt5DetectedOrders(options = {}) {
   if (reviewMode) {
     const { startIso, endIso } = mt5HistoryDateBounds();
     query = query.in("status", ["new", "recorded", "ignored"]);
-    if (startIso) query = query.gte("closed_at", startIso);
-    if (endIso) query = query.lte("closed_at", endIso);
+    if (startIso) query = query.gte("closed_at", new Date(new Date(startIso).getTime() - 36 * 60 * 60000).toISOString());
+    if (endIso) query = query.lte("closed_at", new Date(new Date(endIso).getTime() + 36 * 60 * 60000).toISOString());
   } else {
     query = query.eq("status", "new");
   }
@@ -1236,7 +1236,12 @@ async function fetchMt5DetectedOrders(options = {}) {
   const previousCount = mt5DetectedOrders.length;
   const fetchedOrders = Array.isArray(data) ? data : [];
   if (reviewMode) {
-    mt5DetectedOrders = fetchedOrders.map((order) => ({
+    const reviewOrders = fetchedOrders.filter((order) => {
+      const orderDate = orderDateKeyForHistoryReview(order);
+      return (!mt5HistoryReviewRange.start || orderDate >= mt5HistoryReviewRange.start)
+        && (!mt5HistoryReviewRange.end || orderDate <= mt5HistoryReviewRange.end);
+    });
+    mt5DetectedOrders = reviewOrders.map((order) => ({
       ...order,
       alreadyRecorded: isMt5OrderAlreadyRecorded(order)
     }));
@@ -1264,6 +1269,76 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function mt5RawTimestampSeconds(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric > 100000000000 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+}
+
+function mt5ServerDateFromRaw(value) {
+  const seconds = mt5RawTimestampSeconds(value);
+  return seconds === null ? null : new Date(seconds * 1000);
+}
+
+function mt5ServerDateKeyFromRaw(value) {
+  const date = mt5ServerDateFromRaw(value);
+  if (!date) return "";
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function mt5ServerTimeKeyFromRaw(value) {
+  const date = mt5ServerDateFromRaw(value);
+  if (!date) return "";
+  const hours = String(date.getUTCHours()).padStart(2, "0");
+  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function formatMt5ServerDateTime(value) {
+  const date = mt5ServerDateFromRaw(value);
+  if (!date) return "";
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC"
+  });
+}
+
+function mt5OrderRawTime(order, kind = "closed") {
+  const raw = mt5OrderRaw(order);
+  return kind === "open"
+    ? firstValue(raw.open_time, raw.opened_at)
+    : firstValue(raw.close_time, raw.closed_at, raw.time);
+}
+
+function mt5OrderBrokerDateKey(order, kind = "closed") {
+  return mt5ServerDateKeyFromRaw(mt5OrderRawTime(order, kind));
+}
+
+function mt5OrderBrokerTimeKey(order, kind = "closed") {
+  return mt5ServerTimeKeyFromRaw(mt5OrderRawTime(order, kind));
+}
+
+function mt5OrderDisplayDateTime(order, kind = "closed") {
+  const serverTime = formatMt5ServerDateTime(mt5OrderRawTime(order, kind));
+  return serverTime ? `${serverTime} MT5` : formatDateTime(kind === "open" ? order.opened_at : order.closed_at);
+}
+
+function dateKeyFromTimestamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : localDateKey(date);
+}
+
+function orderDateKeyForHistoryReview(order) {
+  return mt5OrderBrokerDateKey(order, "closed") || dateKeyFromTimestamp(order.closed_at);
 }
 
 function normalizeBrokerSymbol(symbol) {
@@ -1392,6 +1467,8 @@ function mt5OrderToTrade(order) {
   const openedAt = order.opened_at ? new Date(order.opened_at) : closedAt;
   const validClosedAt = !Number.isNaN(closedAt.getTime());
   const validOpenedAt = !Number.isNaN(openedAt.getTime());
+  const brokerOpenDate = mt5OrderBrokerDateKey(order, "open");
+  const brokerOpenTime = mt5OrderBrokerTimeKey(order, "open");
   const commission = parseOptionalNumber(order.commission) ?? 0;
   const swap = parseOptionalNumber(order.swap) ?? 0;
   const lotSize = parseOptionalNumber(order.lot_size) ?? 0;
@@ -1413,8 +1490,8 @@ function mt5OrderToTrade(order) {
 
   return {
     id: randomId("trade"),
-    date: validOpenedAt ? localDateKey(openedAt) : validClosedAt ? localDateKey(closedAt) : localDateKey(),
-    openTime: validOpenedAt ? localTimeKey(openedAt) : "",
+    date: brokerOpenDate || (validOpenedAt ? localDateKey(openedAt) : validClosedAt ? localDateKey(closedAt) : localDateKey()),
+    openTime: brokerOpenTime || (validOpenedAt ? localTimeKey(openedAt) : ""),
     mt5ExternalId: cleanMt5Key(order.external_id),
     mt5PositionId: cleanMt5Key(order.position_id || raw.position_id || raw.order_id || raw.ticket),
     mt5DealId: cleanMt5Key(raw.exit_ticket || raw.deal_ticket || raw.close_ticket || raw.closed_ticket),
@@ -1523,7 +1600,7 @@ function renderMt5Inbox() {
               <span class="mt5-pill ${direction.toLowerCase()}">${escapeHtml(direction)}</span>
               <span class="mt5-source-pill ${escapeHtml(mt5SourceClass(source))}">${escapeHtml(source)}</span>
             </strong>
-            <p>${escapeHtml(formatDateTime(order.closed_at))} | ${numberFormatter.format(toNumber(order.lot_size))} lot | Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
+            <p>${escapeHtml(mt5OrderDisplayDateTime(order, "closed"))} | ${numberFormatter.format(toNumber(order.lot_size))} lot | Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
             <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Stop ${escapeHtml(stopText)} | Target ${escapeHtml(targetText)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
           </div>
           <div class="mt5-order-actions">
