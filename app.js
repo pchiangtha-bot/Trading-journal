@@ -2702,7 +2702,7 @@ function sortTradesForTable(list) {
 }
 
 function syncTradeSortHeaders() {
-  $("[data-sort-key]").forEach((button) => {
+  $$("[data-sort-key]").forEach((button) => {
     const active = button.dataset.sortKey === tradeSort.key;
     button.classList.toggle("active", active);
     button.dataset.sortIndicator = active ? (tradeSort.direction === "asc" ? "^" : "v") : "";
@@ -4410,7 +4410,7 @@ function bindEvents() {
     $(`#${id}`).addEventListener("input", renderTable);
   });
 
-  $("[data-sort-key]").forEach((button) => {
+  $$("[data-sort-key]").forEach((button) => {
     button.addEventListener("click", () => {
       const key = button.dataset.sortKey || "datetime";
       if (tradeSort.key === key) {
