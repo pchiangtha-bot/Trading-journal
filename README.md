@@ -36,6 +36,14 @@ This app includes a safe MT5 bridge for detecting closed positions. It does not 
 
 When a position fully closes, the Journal page will show it in Detected Closed Positions. Click Record to load broker facts into the Trade Ticket, then type your own Session and Setup before saving.
 
+### MT5 Mobile Closed-Position Relay
+
+Android and iOS orders use the same Supabase Edge Function and the same Detected Closed Positions inbox. Sign in with Cloud, then open the MT5 Bridge panel and click Mobile to generate a mobile relay token. Use the shown `WebhookUrl`, `Authorization=Bearer ...` header, and JSON template from iOS Shortcuts, an Android HTTP automation app, a broker export/parser, or another trusted relay that can read the closed-position facts and POST them as JSON.
+
+The MT5 mobile app can show account history and close orders, but this static web app still needs an external relay to send those mobile close events to Supabase in real time.
+
+For tracking when both PC and phone are switched off, use the free-path Oracle Cloud package in `oracle-relay/`. It runs MT5 continuously on an Oracle Always Free AMD Ubuntu VM and uses the normal `PC` bridge token from the app.
+
 With Supabase CLI, the deploy command is:
 
 ```powershell
@@ -82,6 +90,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - Local account profiles with password-gated sign in, account switching, and separated trades, strategies, custom pairs, and settings per account
 - Supabase email/password cloud sync with local-profile migration and realtime updates across devices
 - MT5 desktop closed-position bridge with review-before-record inbox
+- MT5 mobile closed-position relay setup for Android/iOS payloads into the same realtime inbox
 
 ## Market Chart Notes
 

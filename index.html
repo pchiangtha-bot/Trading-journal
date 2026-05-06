@@ -39,52 +39,6 @@
         </div>
       </section>
 
-      <section class="cloud-panel" aria-labelledby="cloud-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Cloud Sync</p>
-            <h2 id="cloud-title">Supabase</h2>
-          </div>
-          <span class="sync-badge muted" id="cloudSyncStatus">Local</span>
-        </div>
-        <button class="tool-button cloud-login-button" type="button" id="openCloudAuthBtn">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-          Email Sync
-        </button>
-        <div class="cloud-session hidden" id="cloudSessionPanel">
-          <p id="cloudEmail">Not signed in</p>
-          <div class="cloud-actions">
-            <button class="mini-button text-mini" type="button" id="openCloudProfileBtn">Open</button>
-            <button class="mini-button text-mini" type="button" id="migrateCloudBtn">Migrate</button>
-            <button class="mini-button text-mini" type="button" id="syncNowBtn">Sync</button>
-            <button class="mini-button text-mini danger" type="button" id="cloudSignOutBtn">Out</button>
-          </div>
-        </div>
-        <div class="mt5-bridge-panel hidden" id="mt5BridgePanel">
-          <div class="section-heading">
-            <strong>MT5 Bridge</strong>
-            <button class="mini-button text-mini" type="button" id="generateMt5TokenBtn">Token</button>
-          </div>
-          <textarea id="mt5BridgeOutput" rows="5" readonly placeholder="Generate a token after cloud sign in."></textarea>
-          <button class="tool-button" type="button" id="copyMt5BridgeBtn">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z"/><path d="M6 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
-            Copy Setup
-          </button>
-        </div>
-        <p class="cloud-note" id="cloudNote">Use email/password to sync this journal between iPhone and PC.</p>
-      </section>
-
-      <section class="dst-panel" aria-labelledby="dst-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Daylight Saving</p>
-            <h2 id="dst-title">Session Clock</h2>
-          </div>
-          <span id="dstLocalClock">--:--</span>
-        </div>
-        <div class="dst-list" id="dstList"></div>
-      </section>
-
       <nav class="nav-tabs" aria-label="Primary">
         <button class="nav-tab active" data-view="journal">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -99,6 +53,17 @@
           Strategy Lab
         </button>
       </nav>
+
+      <section class="dst-panel" aria-labelledby="dst-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Daylight Saving</p>
+            <h2 id="dst-title">Session Clock</h2>
+          </div>
+          <span id="dstLocalClock">--:--</span>
+        </div>
+        <div class="dst-list" id="dstList"></div>
+      </section>
 
       <section class="market-tools-panel sidebar-market-panel" aria-labelledby="market-tools-title">
         <div class="market-panel-header">
@@ -141,6 +106,52 @@
           <div class="tradingview-widget-container__widget" id="tradingViewWidget"></div>
           <a class="market-chart-overlay" id="marketChartOverlay" href="https://www.tradingview.com/symbols/XAUUSD/?exchange=PEPPERSTONE" target="_blank" rel="noopener noreferrer" aria-label="Open Pepperstone chart on TradingView"></a>
         </div>
+      </section>
+
+      <section class="cloud-panel" aria-labelledby="cloud-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Cloud Sync</p>
+            <h2 id="cloud-title">Supabase</h2>
+          </div>
+          <span class="sync-badge muted" id="cloudSyncStatus">Local</span>
+        </div>
+        <button class="tool-button cloud-login-button" type="button" id="openCloudAuthBtn">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          Email Sync
+        </button>
+        <div class="cloud-session hidden" id="cloudSessionPanel">
+          <p id="cloudEmail">Not signed in</p>
+          <div class="cloud-actions">
+            <button class="mini-button text-mini" type="button" id="openCloudProfileBtn">Open</button>
+            <button class="mini-button text-mini" type="button" id="migrateCloudBtn">Migrate</button>
+            <button class="mini-button text-mini" type="button" id="syncNowBtn">Sync</button>
+            <button class="mini-button text-mini danger" type="button" id="cloudSignOutBtn">Out</button>
+          </div>
+        </div>
+        <div class="mt5-bridge-panel hidden" id="mt5BridgePanel">
+          <div class="section-heading">
+            <div>
+              <strong>MT5 Bridge</strong>
+              <p>Closed positions land in the Journal inbox.</p>
+            </div>
+          </div>
+          <div class="bridge-action-row">
+            <button class="mini-button text-mini" type="button" id="generateMt5TokenBtn">PC</button>
+            <button class="mini-button text-mini" type="button" id="generateMt5MobileTokenBtn">Mobile</button>
+          </div>
+          <div class="mobile-engine-strip" aria-label="MT5 mobile engines">
+            <span>iOS</span>
+            <span>Android</span>
+            <span>Realtime</span>
+          </div>
+          <textarea id="mt5BridgeOutput" rows="8" readonly placeholder="Generate a PC or Mobile token after cloud sign in."></textarea>
+          <button class="tool-button" type="button" id="copyMt5BridgeBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z"/><path d="M6 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
+            Copy Setup
+          </button>
+        </div>
+        <p class="cloud-note" id="cloudNote">Use email/password to sync this journal between iPhone and PC.</p>
       </section>
 
       <section class="track-panel" aria-labelledby="track-title">

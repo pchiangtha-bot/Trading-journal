@@ -738,6 +738,49 @@ function mt5WebhookUrl() {
   return `${supabaseConfig.url.replace(/\/$/, "")}/functions/v1/mt5-closed-order`;
 }
 
+function mt5MobilePayloadTemplate() {
+  return JSON.stringify({
+    source: "mt5-mobile",
+    client_platform: "ios-or-android",
+    external_id: "account-position-closeTicket",
+    broker_account: "12345678",
+    broker_server: "Broker-Live",
+    symbol: "XAUUSD",
+    direction: "Buy",
+    open_time: "2026-05-06T09:20:00+07:00",
+    close_time: "2026-05-06T10:05:00+07:00",
+    lot_size: 0.1,
+    entry_price: 2320.15,
+    exit_price: 2328.4,
+    stop_loss: 2314.0,
+    take_profit: 2332.0,
+    profit: 82.5,
+    commission: -0.7,
+    swap: 0
+  }, null, 2);
+}
+
+function mt5BridgeSetupText(token, source = "desktop") {
+  if (source === "mobile") {
+    return [
+      `WebhookUrl=${mt5WebhookUrl()}`,
+      `BridgeToken=${token}`,
+      `Authorization=Bearer ${token}`,
+      "Content-Type=application/json",
+      "MobileEngine=iOS Shortcuts or Android HTTP Request",
+      "RealtimeTarget=Detected Closed Positions inbox",
+      "JSON payload:",
+      mt5MobilePayloadTemplate()
+    ].join("\n");
+  }
+
+  return [
+    `WebhookUrl=${mt5WebhookUrl()}`,
+    `BridgeToken=${token}`,
+    "MT5 Allow URL=https://lzaetartgfejsnwpiezc.supabase.co"
+  ].join("\n");
+}
+
 function setCloudStatus(label, detail = "", tone = "muted") {
   cloudSyncState = { label, detail, tone };
   syncCloudUi();
@@ -1015,15 +1058,16 @@ function subscribeCloudProfile() {
     });
 }
 
-async function generateMt5BridgeToken() {
+async function generateMt5BridgeToken(source = "desktop") {
   if (!supabaseClient || !cloudUser) {
     showAuthOverlay("cloud", false);
     return;
   }
 
-  const token = randomToken("fxej_mt5");
+  const isMobile = source === "mobile";
+  const token = randomToken(isMobile ? "fxej_mt5_mobile" : "fxej_mt5");
   const tokenHash = await sha256Hex(token);
-  const label = `MT5 desktop ${new Date().toLocaleDateString()}`;
+  const label = `${isMobile ? "MT5 mobile relay" : "MT5 desktop"} ${new Date().toLocaleDateString()}`;
   const { error } = await supabaseClient.from(mt5TokenTable).insert({
     user_id: cloudUser.id,
     token_hash: tokenHash,
@@ -1035,18 +1079,14 @@ async function generateMt5BridgeToken() {
     return;
   }
 
-  latestMt5BridgeSetup = [
-    `WebhookUrl=${mt5WebhookUrl()}`,
-    `BridgeToken=${token}`,
-    "MT5 Allow URL=https://lzaetartgfejsnwpiezc.supabase.co"
-  ].join("\n");
+  latestMt5BridgeSetup = mt5BridgeSetupText(token, source);
   const output = $("#mt5BridgeOutput");
   if (output) {
     output.value = latestMt5BridgeSetup;
     output.focus();
     output.select();
   }
-  showToast("MT5 bridge token created. Save it now; it is shown once.");
+  showToast(isMobile ? "MT5 mobile relay token created. Save it now; it is shown once." : "MT5 bridge token created. Save it now; it is shown once.");
 }
 
 function copyMt5BridgeSetup() {
@@ -1136,8 +1176,27 @@ function normalizeBrokerSymbol(symbol) {
   return normalizePair(raw);
 }
 
+function mt5OrderRaw(order) {
+  return order?.raw && typeof order.raw === "object" ? order.raw : {};
+}
+
+function mt5OrderSource(order) {
+  const raw = mt5OrderRaw(order);
+  const platform = String(raw.client_platform || raw.platform || raw.mobile_engine || raw.source || "").toLowerCase();
+  if (platform.includes("ios-or-android")) return "Mobile";
+  if (platform.includes("iphone") || platform.includes("ipad") || platform.includes("ios")) return "iOS";
+  if (platform.includes("android")) return "Android";
+  if (platform.includes("mobile")) return "Mobile";
+  return "PC";
+}
+
+function mt5SourceClass(source) {
+  return String(source || "pc").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
 function mt5OrderToTrade(order) {
   const pair = normalizeBrokerSymbol(order.symbol);
+  const source = mt5OrderSource(order);
   ensurePairAvailable(pair, order.contract_size);
   const closedAt = order.closed_at ? new Date(order.closed_at) : new Date();
   const commission = parseOptionalNumber(order.commission) ?? 0;
@@ -1194,6 +1253,7 @@ function mt5OrderToTrade(order) {
     tags: ["mt5", "auto-detected"],
     notes: [
       `Imported from MT5 closed position ${order.external_id || order.position_id || ""}.`.trim(),
+      `Source: MT5 ${source}.`,
       "Session and setup left blank for manual review.",
       order.broker_account ? `Broker account: ${order.broker_account}.` : "",
       Number.isFinite(parseOptionalNumber(order.profit)) ? `MT5 net profit before journal fees: ${currencyFormatter.format(parseOptionalNumber(order.profit))}.` : ""
@@ -1242,6 +1302,7 @@ function renderMt5Inbox() {
   list.innerHTML = mt5DetectedOrders
     .map((order) => {
       const direction = String(order.direction || "Buy").toLowerCase() === "sell" ? "Sell" : "Buy";
+      const source = mt5OrderSource(order);
       const pl = parseOptionalNumber(order.profit);
       const commission = parseOptionalNumber(order.commission) ?? 0;
       const swap = parseOptionalNumber(order.swap) ?? 0;
@@ -1254,6 +1315,7 @@ function renderMt5Inbox() {
           <div>
             <strong>${escapeHtml(normalizeBrokerSymbol(order.symbol))}
               <span class="mt5-pill ${direction.toLowerCase()}">${escapeHtml(direction)}</span>
+              <span class="mt5-source-pill ${escapeHtml(mt5SourceClass(source))}">${escapeHtml(source)}</span>
             </strong>
             <p>${escapeHtml(formatDateTime(order.closed_at))} | ${numberFormatter.format(toNumber(order.lot_size))} lot | Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
             <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Stop ${escapeHtml(stopText)} | Target ${escapeHtml(targetText)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
@@ -3934,7 +3996,10 @@ function bindEvents() {
   if (cloudSignOutButton) cloudSignOutButton.addEventListener("click", handleCloudSignOut);
 
   const generateMt5TokenButton = $("#generateMt5TokenBtn");
-  if (generateMt5TokenButton) generateMt5TokenButton.addEventListener("click", generateMt5BridgeToken);
+  if (generateMt5TokenButton) generateMt5TokenButton.addEventListener("click", () => generateMt5BridgeToken("desktop"));
+
+  const generateMt5MobileTokenButton = $("#generateMt5MobileTokenBtn");
+  if (generateMt5MobileTokenButton) generateMt5MobileTokenButton.addEventListener("click", () => generateMt5BridgeToken("mobile"));
 
   const copyMt5BridgeButton = $("#copyMt5BridgeBtn");
   if (copyMt5BridgeButton) copyMt5BridgeButton.addEventListener("click", copyMt5BridgeSetup);

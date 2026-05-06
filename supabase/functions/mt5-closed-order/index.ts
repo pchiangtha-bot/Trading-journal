@@ -49,6 +49,10 @@ function textOrNull(value: unknown) {
   return text || null;
 }
 
+function firstValue(...values: unknown[]) {
+  return values.find((value) => value !== null && value !== undefined && value !== "");
+}
+
 function cleanDirection(value: unknown) {
   return String(value || "").toLowerCase() === "sell" ? "Sell" : "Buy";
 }
@@ -89,7 +93,11 @@ Deno.serve(async (req) => {
   if (!bridge) return jsonResponse({ error: "MT5 bridge token was not accepted." }, 401);
 
   const externalId = textOrNull(payload.external_id)
-    || [payload.broker_account, payload.position_id, payload.exit_ticket || payload.deal_ticket]
+    || [payload.broker_account, firstValue(payload.position_id, payload.order_id, payload.ticket), firstValue(payload.exit_ticket, payload.deal_ticket, payload.close_ticket, payload.closed_ticket)]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+      .join(":")
+    || [payload.source, payload.client_platform, payload.broker_account, payload.symbol, firstValue(payload.close_time, payload.closed_at, payload.time), payload.profit]
       .map((value) => String(value ?? "").trim())
       .filter(Boolean)
       .join(":");
@@ -102,12 +110,12 @@ Deno.serve(async (req) => {
     broker_account: textOrNull(payload.broker_account),
     broker_server: textOrNull(payload.broker_server),
     symbol: textOrNull(payload.symbol) || "UNKNOWN",
-    direction: cleanDirection(payload.direction),
-    opened_at: timestampOrNull(payload.open_time ?? payload.opened_at),
-    closed_at: timestampOrNull(payload.close_time ?? payload.closed_at) || new Date().toISOString(),
-    lot_size: numberOrNull(payload.lot_size ?? payload.volume),
-    entry_price: numberOrNull(payload.entry_price),
-    exit_price: numberOrNull(payload.exit_price),
+    direction: cleanDirection(firstValue(payload.direction, payload.side, payload.type)),
+    opened_at: timestampOrNull(firstValue(payload.open_time, payload.opened_at)),
+    closed_at: timestampOrNull(firstValue(payload.close_time, payload.closed_at, payload.time)) || new Date().toISOString(),
+    lot_size: numberOrNull(firstValue(payload.lot_size, payload.volume, payload.lots)),
+    entry_price: numberOrNull(firstValue(payload.entry_price, payload.open_price)),
+    exit_price: numberOrNull(firstValue(payload.exit_price, payload.close_price)),
     stop_loss: numberOrNull(payload.stop_loss),
     take_profit: numberOrNull(payload.take_profit),
     profit: numberOrNull(payload.profit),
