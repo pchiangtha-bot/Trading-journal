@@ -90,6 +90,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - Local account profiles with password-gated sign in, account switching, and separated trades, strategies, custom pairs, and settings per account
 - Supabase email/password cloud sync with local-profile migration and realtime updates across devices
 - MT5 desktop closed-position bridge with review-before-record inbox
+- MT5 history sync requests from PC or iPhone, executed when an MT5 desktop bridge is online
 - MT5 mobile closed-position relay setup for Android/iOS payloads into the same realtime inbox
 
 ## Market Chart Notes
@@ -113,3 +114,17 @@ For EUR/USD, GBP/USD, AUD/USD, and XAU/USD, quote-to-USD is `1`. For USD/JPY, th
 Accounts are local profiles for this browser/device. Passwords are stored as salted hashes when Web Crypto is available, but a static offline app cannot provide the same protection as a server-backed login system. Use the feature for separation and privacy on your device, not for high-security data protection.
 
 Cloud accounts use Supabase Auth. The app stores one cloud journal per email account in `public.journal_profiles`, protected by Row Level Security so each signed-in user can read and write only their own journal row.
+
+## MT5 History Sync Requests
+
+If Oracle capacity is unavailable, you can still record a selected period of closed MT5 history. Sign in to Cloud from PC or iPhone, choose From/To dates in the MT5 Bridge panel, then click History. This creates a pending request in Supabase. The next time MT5 desktop bridge is online, on your PC or Oracle relay, it polls the request, uploads closed positions from that period, and they appear in Detected Closed Positions.
+
+In the EA inputs, keep:
+
+```text
+PollHistoryRequests=true
+HistoryRequestPollSeconds=60
+```
+
+MT5 mobile can create the request through the web app, but MT5 mobile cannot read/export account history automatically by itself. A desktop MT5 bridge must execute the request when it is online.
+

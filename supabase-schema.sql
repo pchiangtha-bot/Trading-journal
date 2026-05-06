@@ -129,3 +129,43 @@ begin
   end if;
 end
 $$;
+
+
+create table if not exists public.mt5_history_requests (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  requested_by text,
+  start_date date not null,
+  end_date date not null,
+  status text not null default 'pending' check (status in ('pending', 'processing', 'done', 'error')),
+  picked_up_at timestamptz,
+  completed_at timestamptz,
+  order_count integer not null default 0,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.mt5_history_requests enable row level security;
+
+drop policy if exists "Users can manage own MT5 history requests" on public.mt5_history_requests;
+create policy "Users can manage own MT5 history requests"
+on public.mt5_history_requests
+for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'mt5_history_requests'
+  ) then
+    alter publication supabase_realtime add table public.mt5_history_requests;
+  end if;
+end
+$$;

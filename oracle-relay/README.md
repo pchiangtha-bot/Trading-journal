@@ -199,3 +199,8 @@ Also run the latest `supabase-schema.sql` in the Supabase SQL Editor.
 4. Go to Journal.
 5. Confirm the trade appears in `Detected Closed Positions`.
 6. Click `Record` only after reviewing the imported facts.
+
+
+## History Sync Requests
+
+FX Edge Journal can create a pending MT5 history sync request from PC or iPhone. Keep the EA input `PollHistoryRequests=true`; the relay polls Supabase and uploads the selected closed-order date range when MT5 is online.

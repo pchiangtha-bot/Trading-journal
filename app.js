@@ -18,6 +18,7 @@ const supabaseConfig = {
 const cloudProfileTable = "journal_profiles";
 const mt5TokenTable = "mt5_bridge_tokens";
 const mt5OrderTable = "mt5_detected_orders";
+const mt5HistoryRequestTable = "mt5_history_requests";
 let equityPeriod = "day";
 let equityChartState = { points: [] };
 let barChartStates = {};
@@ -1058,6 +1059,63 @@ function subscribeCloudProfile() {
     });
 }
 
+function mt5HistoryDateDefaults() {
+  const end = localDateKey(new Date());
+  const start = localDateKey(addDays(new Date(), -6));
+  return { start, end };
+}
+
+function syncMt5HistoryControls() {
+  const startInput = $("#mt5HistoryStart");
+  const endInput = $("#mt5HistoryEnd");
+  if (!startInput || !endInput) return;
+  const defaults = mt5HistoryDateDefaults();
+  if (!startInput.value) startInput.value = defaults.start;
+  if (!endInput.value) endInput.value = defaults.end;
+}
+
+async function createMt5HistoryRequest() {
+  if (!supabaseClient || !cloudUser) {
+    showAuthOverlay("cloud", false);
+    return;
+  }
+
+  syncMt5HistoryControls();
+  const startDate = $("#mt5HistoryStart")?.value || "";
+  const endDate = $("#mt5HistoryEnd")?.value || "";
+  if (!startDate || !endDate) {
+    showToast("Choose the MT5 history start and end dates.");
+    return;
+  }
+  if (startDate > endDate) {
+    showToast("History start date must be before end date.");
+    return;
+  }
+
+  const { error } = await supabaseClient.from(mt5HistoryRequestTable).insert({
+    user_id: cloudUser.id,
+    start_date: startDate,
+    end_date: endDate,
+    requested_by: ensureCloudClientId(),
+    status: "pending"
+  });
+
+  if (error) {
+    showToast(friendlyCloudError(error));
+    return;
+  }
+
+  latestMt5BridgeSetup = [
+    `HistoryRequest=${startDate} to ${endDate}`,
+    "Status=Pending until MT5 PC or Oracle relay is online",
+    "Required EA input: PollHistoryRequests=true",
+    "Open MT5 desktop bridge, or keep the Oracle relay running."
+  ].join("\n");
+  const output = $("#mt5BridgeOutput");
+  if (output) output.value = latestMt5BridgeSetup;
+  showToast("History sync request created. MT5 bridge will upload it when online.");
+}
+
 async function generateMt5BridgeToken(source = "desktop") {
   if (!supabaseClient || !cloudUser) {
     showAuthOverlay("cloud", false);
@@ -1183,6 +1241,7 @@ function mt5OrderRaw(order) {
 function mt5OrderSource(order) {
   const raw = mt5OrderRaw(order);
   const platform = String(raw.client_platform || raw.platform || raw.mobile_engine || raw.source || "").toLowerCase();
+  if (platform.includes("history")) return "History";
   if (platform.includes("ios-or-android")) return "Mobile";
   if (platform.includes("iphone") || platform.includes("ipad") || platform.includes("ios")) return "iOS";
   if (platform.includes("android")) return "Android";
@@ -4000,6 +4059,9 @@ function bindEvents() {
 
   const generateMt5MobileTokenButton = $("#generateMt5MobileTokenBtn");
   if (generateMt5MobileTokenButton) generateMt5MobileTokenButton.addEventListener("click", () => generateMt5BridgeToken("mobile"));
+
+  const generateMt5HistoryButton = $("#generateMt5HistoryTokenBtn");
+  if (generateMt5HistoryButton) generateMt5HistoryButton.addEventListener("click", createMt5HistoryRequest);
 
   const copyMt5BridgeButton = $("#copyMt5BridgeBtn");
   if (copyMt5BridgeButton) copyMt5BridgeButton.addEventListener("click", copyMt5BridgeSetup);

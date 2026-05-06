@@ -92,6 +92,49 @@ Deno.serve(async (req) => {
   if (tokenError) return jsonResponse({ error: tokenError.message }, 500);
   if (!bridge) return jsonResponse({ error: "MT5 bridge token was not accepted." }, 401);
 
+  if (payload.action === "poll_history_request") {
+    const { data: request, error: requestError } = await supabase
+      .from("mt5_history_requests")
+      .select("id,start_date,end_date")
+      .eq("user_id", bridge.user_id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (requestError) return jsonResponse({ error: requestError.message }, 500);
+    if (!request) return jsonResponse({ ok: true, request: null });
+
+    const { error: updateError } = await supabase
+      .from("mt5_history_requests")
+      .update({ status: "processing", picked_up_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("id", request.id)
+      .eq("user_id", bridge.user_id);
+
+    if (updateError) return jsonResponse({ error: updateError.message }, 500);
+    return jsonResponse({ ok: true, request });
+  }
+
+  if (payload.action === "complete_history_request") {
+    const requestId = textOrNull(payload.request_id);
+    if (!requestId) return jsonResponse({ error: "Missing history request id." }, 400);
+    const status = String(payload.status || "done") === "error" ? "error" : "done";
+    const { error: updateError } = await supabase
+      .from("mt5_history_requests")
+      .update({
+        status,
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        order_count: numberOrNull(payload.order_count) ?? 0,
+        error_message: textOrNull(payload.error_message)
+      })
+      .eq("id", requestId)
+      .eq("user_id", bridge.user_id);
+
+    if (updateError) return jsonResponse({ error: updateError.message }, 500);
+    return jsonResponse({ ok: true });
+  }
+
   const externalId = textOrNull(payload.external_id)
     || [payload.broker_account, firstValue(payload.position_id, payload.order_id, payload.ticket), firstValue(payload.exit_ticket, payload.deal_ticket, payload.close_ticket, payload.closed_ticket)]
       .map((value) => String(value ?? "").trim())
@@ -116,8 +159,8 @@ Deno.serve(async (req) => {
     lot_size: numberOrNull(firstValue(payload.lot_size, payload.volume, payload.lots)),
     entry_price: numberOrNull(firstValue(payload.entry_price, payload.open_price)),
     exit_price: numberOrNull(firstValue(payload.exit_price, payload.close_price)),
-    stop_loss: numberOrNull(payload.stop_loss),
-    take_profit: numberOrNull(payload.take_profit),
+    stop_loss: numberOrNull(firstValue(payload.stop_loss, payload.sl)),
+    take_profit: numberOrNull(firstValue(payload.take_profit, payload.tp)),
     profit: numberOrNull(payload.profit),
     commission: numberOrNull(payload.commission),
     swap: numberOrNull(payload.swap),

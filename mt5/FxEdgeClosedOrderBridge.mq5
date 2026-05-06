@@ -11,6 +11,12 @@ input string BridgeToken = "";
 input bool   SendPartialCloses = false;
 input int    HistoryLookbackDays = 30;
 input int    TimeoutMs = 7000;
+input bool   UploadHistoryOnStart = false;
+input string HistoryStartDate = "";
+input string HistoryEndDate = "";
+input int    MaxHistoryRecords = 300;
+input bool   PollHistoryRequests = true;
+input int    HistoryRequestPollSeconds = 60;
 
 string sentKeys[];
 
@@ -20,7 +26,22 @@ int OnInit()
    Print("Allow this URL in MT5: Tools > Options > Expert Advisors > Allow WebRequest for listed URL: https://lzaetartgfejsnwpiezc.supabase.co");
    if(BridgeToken == "")
       Print("BridgeToken is empty. Generate a token inside FX Edge Journal, then paste it into this EA input.");
+   if(PollHistoryRequests)
+      EventSetTimer((int)MathMax(15, HistoryRequestPollSeconds));
+   if(UploadHistoryOnStart)
+      UploadClosedHistoryPeriod(HistoryStartDate, HistoryEndDate, "");
    return(INIT_SUCCEEDED);
+  }
+
+void OnDeinit(const int reason)
+  {
+   EventKillTimer();
+  }
+
+void OnTimer()
+  {
+   if(PollHistoryRequests)
+      PollHistoryRequest();
   }
 
 void OnTradeTransaction(const MqlTradeTransaction& trans,
@@ -34,7 +55,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
    string payload = "";
    string dedupeKey = "";
-   if(!BuildClosedPositionPayload(trans.deal, payload, dedupeKey))
+   if(!BuildClosedPositionPayload(trans.deal, payload, dedupeKey, "mt5-desktop", ""))
       return;
    if(AlreadySent(dedupeKey))
       return;
@@ -42,7 +63,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       MarkSent(dedupeKey);
   }
 
-bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeKey)
+bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeKey, string source, string historyRequestId)
   {
    if(BridgeToken == "" || WebhookUrl == "")
      {
@@ -148,11 +169,14 @@ bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeK
    payload += "\"broker_account\":\"" + JsonEscape(IntegerToString(login)) + "\",";
    payload += "\"broker_server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\",";
    payload += "\"broker_company\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\",";
+   payload += "\"source\":\"" + JsonEscape(source) + "\",";
    payload += "\"symbol\":\"" + JsonEscape(symbol) + "\",";
    payload += "\"direction\":\"" + JsonEscape(direction) + "\",";
    payload += "\"position_id\":\"" + JsonEscape(IntegerToString((long)positionId)) + "\",";
    payload += "\"exit_ticket\":\"" + JsonEscape(IntegerToString((long)exitDeal)) + "\",";
    payload += "\"magic\":\"" + JsonEscape(IntegerToString(magic)) + "\",";
+   if(historyRequestId != "")
+      payload += "\"history_request_id\":\"" + JsonEscape(historyRequestId) + "\",";
    payload += "\"open_time\":" + IntegerToString((long)openTime) + ",";
    payload += "\"close_time\":" + IntegerToString((long)closeTime) + ",";
    payload += "\"lot_size\":" + JsonNumber(exitVolume, 2) + ",";
@@ -278,8 +302,113 @@ void FindHistoryStops(ulong positionId,
      }
   }
 
-bool SendPayload(string payload)
+
+bool UploadClosedHistoryPeriod(string startText, string endText, string historyRequestId)
   {
+   int days = (int)MathMax(1, HistoryLookbackDays);
+   datetime fromTime = ParseDateInput(startText, TimeCurrent() - days * 86400);
+   datetime toTime = ParseDateInput(endText, TimeCurrent()) + 86399;
+   if(toTime < fromTime)
+     {
+      Print("FX Edge Journal history sync skipped: end date is before start date.");
+      return(false);
+     }
+
+   if(!HistorySelect(fromTime, toTime))
+     {
+      PrintFormat("FX Edge Journal history sync could not select history. Error %d", GetLastError());
+      if(historyRequestId != "") CompleteHistoryRequest(historyRequestId, 0, "error", "HistorySelect failed");
+      return(false);
+     }
+
+   int sent = 0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total && sent < MaxHistoryRecords; i++)
+     {
+      ulong deal = HistoryDealGetTicket(i);
+      if(deal == 0)
+         continue;
+      long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      string payload = "";
+      string dedupeKey = "";
+      if(!BuildClosedPositionPayload(deal, payload, dedupeKey, "mt5-history", historyRequestId))
+         continue;
+      if(AlreadySent(dedupeKey))
+         continue;
+      if(SendPayload(payload))
+        {
+         MarkSent(dedupeKey);
+         sent++;
+        }
+     }
+
+   PrintFormat("FX Edge Journal history sync sent %d closed positions.", sent);
+   if(historyRequestId != "") CompleteHistoryRequest(historyRequestId, sent, "done", "");
+   return(true);
+  }
+
+datetime ParseDateInput(string value, datetime fallback)
+  {
+   string text = value;
+   StringTrimLeft(text);
+   StringTrimRight(text);
+   if(text == "") return(fallback);
+   StringReplace(text, "-", ".");
+   datetime parsed = StringToTime(text);
+   return(parsed > 0 ? parsed : fallback);
+  }
+
+void PollHistoryRequest()
+  {
+   string response = "";
+   if(!PostJson("{\"action\":\"poll_history_request\"}", response))
+      return;
+
+   string requestId = ExtractJsonString(response, "id");
+   string startDate = ExtractJsonString(response, "start_date");
+   string endDate = ExtractJsonString(response, "end_date");
+   if(requestId == "" || startDate == "" || endDate == "")
+      return;
+
+   Print("FX Edge Journal history request received: " + startDate + " to " + endDate);
+   UploadClosedHistoryPeriod(startDate, endDate, requestId);
+  }
+
+void CompleteHistoryRequest(string requestId, int orderCount, string status, string errorMessage)
+  {
+   string payload = "{";
+   payload += "\"action\":\"complete_history_request\",";
+   payload += "\"request_id\":\"" + JsonEscape(requestId) + "\",";
+   payload += "\"status\":\"" + JsonEscape(status) + "\",";
+   payload += "\"order_count\":" + IntegerToString(orderCount) + ",";
+   payload += "\"error_message\":\"" + JsonEscape(errorMessage) + "\"";
+   payload += "}";
+   string response = "";
+   PostJson(payload, response);
+  }
+
+string ExtractJsonString(string json, string key)
+  {
+   string pattern = "\"" + key + "\":\"";
+   int start = StringFind(json, pattern);
+   if(start < 0) return("");
+   start += StringLen(pattern);
+   int finish = StringFind(json, "\"", start);
+   if(finish < 0) return("");
+   return(StringSubstr(json, start, finish - start));
+  }
+
+bool PostJson(string payload, string &body)
+  {
+   if(BridgeToken == "" || WebhookUrl == "")
+     {
+      Print("FX Edge Journal bridge is not configured.");
+      return(false);
+     }
+
    char data[];
    StringToCharArray(payload, data, 0, WHOLE_ARRAY, CP_UTF8);
    if(ArraySize(data) > 0)
@@ -291,19 +420,25 @@ bool SendPayload(string payload)
 
    ResetLastError();
    int status = WebRequest("POST", WebhookUrl, headers, TimeoutMs, data, response, responseHeaders);
-   string body = CharArrayToString(response, 0, -1, CP_UTF8);
+   body = CharArrayToString(response, 0, -1, CP_UTF8);
 
    if(status >= 200 && status < 300)
-     {
-      Print("FX Edge Journal received closed position: " + body);
       return(true);
-     }
 
    int errorCode = GetLastError();
    PrintFormat("FX Edge Journal bridge failed. HTTP=%d, MT5 error=%d, body=%s", status, errorCode, body);
    if(status == -1)
       Print("Check Tools > Options > Expert Advisors > Allow WebRequest for https://lzaetartgfejsnwpiezc.supabase.co");
    return(false);
+  }
+
+bool SendPayload(string payload)
+  {
+   string body = "";
+   bool ok = PostJson(payload, body);
+   if(ok)
+      Print("FX Edge Journal received closed position: " + body);
+   return(ok);
   }
 
 bool AlreadySent(string key)

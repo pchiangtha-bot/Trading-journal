@@ -227,13 +227,36 @@ button {
 
 .bridge-action-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
 .bridge-action-row .mini-button {
   width: 100%;
   min-height: 34px;
+}
+
+.history-sync-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.history-sync-controls label {
+  display: grid;
+  gap: 4px;
+}
+
+.history-sync-controls span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.history-sync-controls input {
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 0.76rem;
 }
 
 .mobile-engine-strip {
@@ -664,6 +687,11 @@ button {
 .mt5-source-pill.pc {
   color: var(--muted);
   background: #eef1eb;
+}
+
+.mt5-source-pill.history {
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .trade-form,
