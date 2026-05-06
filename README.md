@@ -1,3 +1,4 @@
+- V1.4.7: Cloud sync no longer shows a fatal error when Supabase Realtime pauses, MT5 refresh timeouts stay inside the detected-order panel, and the service worker cache was bumped for mobile reloads.
 # FX Edge Journal
 
 An offline-first FX trading journal for recording trades, reviewing performance, and turning the best repeating setups into written strategies.
@@ -132,3 +133,5 @@ HistoryRequestPollSeconds=60
 
 MT5 mobile can create the request through the web app, but MT5 mobile cannot read/export account history automatically by itself. A desktop MT5 bridge must execute the request when it is online.
 
+
+- V1.4.8: MT5 Display History time now subtracts 3 hours; realtime tracking still uses the sent MT5 server offset and falls back to 3 hours.

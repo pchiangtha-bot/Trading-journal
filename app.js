@@ -259,6 +259,7 @@ let cloudSaveTimer = null;
 let isApplyingCloudSnapshot = false;
 let cloudClientId = "";
 let mt5DetectedOrders = [];
+let mt5InboxState = { kind: "idle", message: "" };
 let pendingMt5OrderId = "";
 let latestMt5BridgeSetup = "";
 let mt5HistoryReviewRange = { active: false, start: "", end: "" };
@@ -784,13 +785,17 @@ function mt5BridgeSetupText(token, source = "desktop") {
   ].join("\n");
 }
 
-function withCloudTimeout(task, message = "Cloud request timed out. Check Supabase connection and try again.", timeoutMs = 18000) {
-  return Promise.race([
-    task,
-    new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(message)), timeoutMs);
-    })
-  ]);
+function withCloudTimeout(task, message = "Cloud request timed out. Check Supabase connection and try again.", timeoutMs = 45000) {
+  let timerId;
+  const timeout = new Promise((_, reject) => {
+    timerId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([Promise.resolve(task), timeout]).finally(() => clearTimeout(timerId));
+}
+
+function setMt5InboxState(kind = "idle", message = "") {
+  mt5InboxState = { kind, message };
+  renderMt5Inbox();
 }
 
 function setCloudStatus(label, detail = "", tone = "muted") {
@@ -1073,7 +1078,12 @@ function subscribeCloudProfile() {
         setCloudStatus("Live", "Realtime sync is listening for iPhone and PC changes.", "success");
       }
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        setCloudStatus("Error", "Realtime sync could not start. Check Supabase Realtime setup.", "error");
+        const activeCloud = isActiveCloudProfile();
+        setCloudStatus(
+          activeCloud ? "Synced" : "Ready",
+          "Email Sync is available. Realtime listener paused, so use Email Sync or Refresh if live updates lag.",
+          activeCloud ? "success" : "ready"
+        );
       }
     });
 }
@@ -1215,7 +1225,11 @@ function subscribeMt5Orders() {
         fetchMt5DetectedOrders({ silent: true }).catch(() => {});
       }
     )
-    .subscribe();
+    .subscribe((status) => {
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        setMt5InboxState("error", "MT5 realtime listener paused. Press Refresh to check Supabase for closed positions.");
+      }
+    });
 }
 
 async function fetchMt5DetectedOrders(options = {}) {
@@ -1243,12 +1257,26 @@ async function fetchMt5DetectedOrders(options = {}) {
     query = query.eq("status", "new");
   }
 
-  const { data, error } = await withCloudTimeout(
-    query,
-    "MT5 detected-order refresh timed out. Check Supabase connection and bridge status."
-  );
+  if (!silent) {
+    setMt5InboxState("loading", reviewMode ? "Loading MT5 history from Supabase." : "Checking Supabase for new closed positions.");
+  }
 
+  let response;
+  try {
+    response = await withCloudTimeout(
+      query,
+      "MT5 detected-order refresh timed out. Check Supabase connection and bridge status.",
+      reviewMode ? 45000 : 30000
+    );
+  } catch (error) {
+    setMt5InboxState("error", friendlyCloudError(error));
+    if (!silent) showToast(friendlyCloudError(error));
+    return;
+  }
+
+  const { data, error } = response;
   if (error) {
+    setMt5InboxState("error", friendlyCloudError(error));
     if (!silent) showToast(friendlyCloudError(error));
     return;
   }
@@ -1265,13 +1293,23 @@ async function fetchMt5DetectedOrders(options = {}) {
       ...order,
       alreadyRecorded: isMt5OrderAlreadyRecorded(order)
     }));
+    mt5InboxState = {
+      kind: mt5DetectedOrders.length ? "ready" : "empty",
+      message: mt5DetectedOrders.length ? "" : "No MT5 orders found in that history period."
+    };
     renderMt5Inbox();
-    if (!silent) showToast(`History display loaded ${mt5DetectedOrders.length} ${mt5DetectedOrders.length === 1 ? "order" : "orders"}.`);
+    if (!silent) showToast("History display loaded " + mt5DetectedOrders.length + " " + (mt5DetectedOrders.length === 1 ? "order" : "orders") + ".");
     return;
   }
 
   const { visibleOrders, duplicateCount } = await skipRecordedMt5Orders(fetchedOrders, { silent });
   mt5DetectedOrders = visibleOrders;
+  mt5InboxState = {
+    kind: mt5DetectedOrders.length ? "ready" : "empty",
+    message: duplicateCount
+      ? duplicateCount + " detected MT5 " + (duplicateCount === 1 ? "order is" : "orders are") + " already in Trade History."
+      : "No new closed positions. Keep the MT5 bridge attached, then press Refresh after a position closes."
+  };
   renderMt5Inbox();
   if (duplicateCount && !silent) {
     showToast(`${duplicateCount} MT5 ${duplicateCount === 1 ? "order is" : "orders are"} already in Trade History and skipped.`);
@@ -1304,7 +1342,7 @@ function mt5ServerDateFromRaw(value, offsetMinutes = 0) {
 
 function mt5OrderSourceOffsetMinutes(order) {
   const raw = mt5OrderRaw(order);
-  if (mt5OrderSource(order) === "History") return 60;
+  if (mt5OrderSource(order) === "History") return 180;
   const explicitOffset = parseOptionalNumber(firstValue(
     raw.server_utc_offset_minutes,
     raw.mt5_server_utc_offset_minutes,
@@ -1609,10 +1647,24 @@ function renderMt5Inbox() {
   const panel = $("#mt5InboxPanel");
   const list = $("#mt5InboxList");
   if (!panel || !list) return;
-  const showPanel = Boolean(cloudUser && mt5DetectedOrders.length);
+  const hasOrders = Boolean(mt5DetectedOrders.length);
+  const showPanel = Boolean(cloudUser && (hasOrders || mt5InboxState.kind !== "idle"));
   panel.classList.toggle("hidden", !showPanel);
   if (!showPanel) {
     list.innerHTML = "";
+    return;
+  }
+
+  if (!hasOrders) {
+    const tone = mt5InboxState.kind === "error" ? "error" : mt5InboxState.kind === "loading" ? "loading" : "empty";
+    const title = mt5InboxState.kind === "error" ? "Could not refresh MT5 orders" : mt5InboxState.kind === "loading" ? "Checking MT5 orders" : "No orders waiting";
+    const message = mt5InboxState.message || "Closed MT5 positions will appear here before you record them.";
+    list.innerHTML = [
+      '<div class="mt5-inbox-state ' + escapeHtml(tone) + '">',
+      '<strong>' + escapeHtml(title) + '</strong>',
+      '<p>' + escapeHtml(message) + '</p>',
+      '</div>'
+    ].join("");
     return;
   }
 

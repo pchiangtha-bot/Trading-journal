@@ -634,6 +634,35 @@ button {
   gap: 10px;
 }
 
+.mt5-inbox-state {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+}
+
+.mt5-inbox-state strong {
+  display: block;
+  font-size: 0.94rem;
+}
+
+.mt5-inbox-state p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.mt5-inbox-state.error {
+  border-color: rgba(197, 18, 70, 0.26);
+  background: var(--red-soft);
+}
+
+.mt5-inbox-state.loading {
+  border-color: rgba(8, 128, 118, 0.28);
+  background: var(--teal-soft);
+}
+
 .mt5-order-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
