@@ -1556,10 +1556,14 @@ function mt5OrderToTrade(order) {
     contractSize: defaultContractSize(pair)
   });
 
+  const tradeDate = brokerOpenDate || (validOpenedAt ? localDateKey(openedAt) : validClosedAt ? localDateKey(closedAt) : localDateKey());
+  const tradeOpenTimeValue = brokerOpenTime || (validOpenedAt ? localTimeKey(openedAt) : "");
+  const autoSession = inferSessionFromTradeDateTime(tradeDate, tradeOpenTimeValue);
+
   return {
     id: randomId("trade"),
-    date: brokerOpenDate || (validOpenedAt ? localDateKey(openedAt) : validClosedAt ? localDateKey(closedAt) : localDateKey()),
-    openTime: brokerOpenTime || (validOpenedAt ? localTimeKey(openedAt) : ""),
+    date: tradeDate,
+    openTime: tradeOpenTimeValue,
     mt5ExternalId: cleanMt5Key(order.external_id),
     mt5PositionId: cleanMt5Key(order.position_id || raw.position_id || raw.order_id || raw.ticket),
     mt5DealId: cleanMt5Key(raw.exit_ticket || raw.deal_ticket || raw.close_ticket || raw.closed_ticket),
@@ -1567,7 +1571,8 @@ function mt5OrderToTrade(order) {
     mt5BrokerServer: cleanMt5Key(order.broker_server),
     mt5Source: source,
     pair,
-    session: "",
+    session: autoSession,
+    sessionAuto: Boolean(autoSession),
     direction,
     setup: "",
     entry,
@@ -1599,7 +1604,8 @@ function mt5OrderToTrade(order) {
     notes: [
       `Imported from MT5 closed position ${order.external_id || order.position_id || ""}.`.trim(),
       `Source: MT5 ${source}.`,
-      "Session and setup left blank for manual review.",
+      autoSession ? `Session auto-filled from opening time: ${autoSession}.` : "Session left blank because opening time was unavailable.",
+      "Setup left blank for manual review.",
       order.broker_account ? `Broker account: ${order.broker_account}.` : "",
       Number.isFinite(parseOptionalNumber(order.profit)) ? `MT5 net profit before journal fees: ${currencyFormatter.format(parseOptionalNumber(order.profit))}.` : ""
     ].filter(Boolean).join("\n")
@@ -1902,6 +1908,70 @@ function daylightSavingStatus(timeZone, date = new Date()) {
   }
   const dstOffset = Math.max(january, july);
   return { active: current === dstOffset, label: current === dstOffset ? "DST On" : "DST Off" };
+}
+
+function minutesFromZonedTime(date, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(date);
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value);
+    return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function minutesInsideWindow(minutes, startMinutes, endMinutes) {
+  if (minutes === null) return false;
+  return startMinutes <= endMinutes
+    ? minutes >= startMinutes && minutes < endMinutes
+    : minutes >= startMinutes || minutes < endMinutes;
+}
+
+function marketWindowActive(date, timeZone, startHour = 8, endHour = 17) {
+  return minutesInsideWindow(minutesFromZonedTime(date, timeZone), startHour * 60, endHour * 60);
+}
+
+function dateFromTradeDateTime(dateKey, timeKey) {
+  const dateText = String(dateKey || "").slice(0, 10);
+  const timeText = normalizeTimeValue(timeKey);
+  if (!dateText || !timeText) return null;
+  const date = new Date(`${dateText}T${timeText}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function inferSessionFromDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const london = marketWindowActive(date, "Europe/London");
+  const newYork = marketWindowActive(date, "America/New_York");
+  const asia = marketWindowActive(date, "Asia/Tokyo") || marketWindowActive(date, "Australia/Sydney");
+  if (london && newYork) return "London/New York";
+  if (newYork) return "New York";
+  if (london) return "London";
+  if (asia) return "Asia";
+  return "";
+}
+
+function inferSessionFromTradeDateTime(dateKey, timeKey) {
+  return inferSessionFromDate(dateFromTradeDateTime(dateKey, timeKey));
+}
+
+function syncSessionFromOpenTime(force = false) {
+  const form = $("#tradeForm");
+  if (!form) return "";
+  const sessionInput = form.elements.session;
+  const inferred = inferSessionFromTradeDateTime(form.elements.date.value, form.elements.openTime.value);
+  if (!inferred) return "";
+  if (force || !sessionInput.value || sessionInput.dataset.auto === "true") {
+    sessionInput.value = inferred;
+    sessionInput.dataset.auto = "true";
+  }
+  return inferred;
 }
 
 function renderDstWidget() {
@@ -4093,6 +4163,7 @@ function readTradeForm() {
     openTime: normalizeTimeValue(data.get("openTime")),
     pair: normalizePair(data.get("pair")),
     session: data.get("session"),
+    sessionAuto: form.elements.session.dataset.auto === "true",
     direction,
     setup: String(data.get("setup") || "").trim(),
     entry: parseOptionalNumber(data.get("entry")) ?? 0,
@@ -4150,7 +4221,9 @@ function fillTradeForm(trade) {
   form.elements.pair.value = normalizePair(trade.pair);
   if (!form.elements.pair.value) form.elements.pair.value = defaultPair;
   syncPairTicket(form.elements.pair.value);
-  form.elements.session.value = trade.session;
+  const inferredSession = trade.session || inferSessionFromTradeDateTime(trade.date, tradeOpenTime(trade));
+  form.elements.session.value = inferredSession;
+  form.elements.session.dataset.auto = trade.sessionAuto || (!trade.session && inferredSession) ? "true" : "";
   form.elements.setup.value = trade.setup;
   form.elements.entry.value = trade.entry || "";
   form.elements.stop.value = trade.stop || "";
@@ -4182,6 +4255,7 @@ function resetTradeForm() {
   form.elements.id.value = "";
   form.elements.date.value = localDateKey();
   form.elements.openTime.value = "";
+  form.elements.session.dataset.auto = "";
   form.elements.pair.value = defaultPair;
   syncPairTicket(defaultPair);
   form.elements.commissionPerLot.value = settings.commissionPerLot;
@@ -4642,6 +4716,14 @@ function bindEvents() {
   });
 
   const form = $("#tradeForm");
+  ["date", "openTime"].forEach((name) => {
+    const handler = () => syncSessionFromOpenTime();
+    form.elements[name].addEventListener("input", handler);
+    form.elements[name].addEventListener("change", handler);
+  });
+  form.elements.session.addEventListener("change", () => {
+    form.elements.session.dataset.auto = "";
+  });
   ["pair", "entry", "stop", "target", "exit", "lotSize", "quoteToAccount", "manualR", "commissionPerLot", "commission", "swap"].forEach((name) => {
     const handler = () => {
       if (name === "pair") {
