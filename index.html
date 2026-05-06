@@ -269,10 +269,14 @@
 
             <form id="tradeForm" class="trade-form">
               <input type="hidden" name="id">
-              <div class="form-grid two">
+              <div class="form-grid three">
                 <label>
                   <span>Date</span>
                   <input type="date" name="date" required>
+                </label>
+                <label>
+                  <span>Open Time</span>
+                  <input type="time" name="openTime">
                 </label>
                 <label>
                   <span>Pair</span>
@@ -518,13 +522,13 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th>Pair</th>
-                    <th>Dir</th>
-                    <th>Setup</th>
-                    <th>R</th>
-                    <th>P/L</th>
-                    <th>Discipline</th>
+                    <th><button class="table-sort active" type="button" data-sort-key="datetime" data-sort-indicator="v">Date / Time</button></th>
+                    <th><button class="table-sort" type="button" data-sort-key="pair">Pair</button></th>
+                    <th><button class="table-sort" type="button" data-sort-key="direction">Dir</button></th>
+                    <th><button class="table-sort" type="button" data-sort-key="setup">Setup</button></th>
+                    <th><button class="table-sort" type="button" data-sort-key="r">R</button></th>
+                    <th><button class="table-sort" type="button" data-sort-key="pl">P/L</button></th>
+                    <th><button class="table-sort" type="button" data-sort-key="discipline">Discipline</button></th>
                     <th></th>
                   </tr>
                 </thead>

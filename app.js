@@ -248,6 +248,7 @@ let activeAccount = null;
 let customPairs = [];
 let settings = { ...defaultSettings };
 let trades = [];
+let tradeSort = { key: "datetime", direction: "desc" };
 let strategies = [];
 let supabaseClient = null;
 let cloudSession = null;
@@ -1258,6 +1259,9 @@ function mt5OrderToTrade(order) {
   const source = mt5OrderSource(order);
   ensurePairAvailable(pair, order.contract_size);
   const closedAt = order.closed_at ? new Date(order.closed_at) : new Date();
+  const openedAt = order.opened_at ? new Date(order.opened_at) : closedAt;
+  const validClosedAt = !Number.isNaN(closedAt.getTime());
+  const validOpenedAt = !Number.isNaN(openedAt.getTime());
   const commission = parseOptionalNumber(order.commission) ?? 0;
   const swap = parseOptionalNumber(order.swap) ?? 0;
   const lotSize = parseOptionalNumber(order.lot_size) ?? 0;
@@ -1279,7 +1283,8 @@ function mt5OrderToTrade(order) {
 
   return {
     id: randomId("trade"),
-    date: Number.isNaN(closedAt.getTime()) ? localDateKey() : closedAt.toISOString().slice(0, 10),
+    date: validOpenedAt ? localDateKey(openedAt) : validClosedAt ? localDateKey(closedAt) : localDateKey(),
+    openTime: validOpenedAt ? localTimeKey(openedAt) : "",
     pair,
     session: "",
     direction,
@@ -1651,6 +1656,13 @@ function localDateKey(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function localTimeKey(date = new Date()) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
 }
 
 function addDays(date, days) {
@@ -2545,14 +2557,70 @@ function renderFilters() {
   setupFilter.value = setups.includes(selected) ? selected : "all";
 }
 
+function normalizeTimeValue(value) {
+  const text = String(value ?? "").trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return "";
+  const hours = Math.min(Math.max(Number(match[1]), 0), 23);
+  const minutes = Math.min(Math.max(Number(match[2]), 0), 59);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function tradeOpenTime(trade) {
+  return normalizeTimeValue(trade.openTime ?? trade.open_time ?? trade.openedTime ?? trade.opened_time ?? trade.time);
+}
+
+function tradeDateTimeKey(trade) {
+  const date = String(trade.date || "").slice(0, 10);
+  return `${date}T${tradeOpenTime(trade) || "00:00"}`;
+}
+
+function compareTradeText(a, b) {
+  return String(a ?? "").localeCompare(String(b ?? ""), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function compareTradesByKey(a, b, key) {
+  if (key === "datetime") return compareTradeText(tradeDateTimeKey(a), tradeDateTimeKey(b));
+  if (key === "pair") return compareTradeText(a.pair, b.pair);
+  if (key === "direction") return compareTradeText(a.direction, b.direction);
+  if (key === "setup") return compareTradeText(a.setup, b.setup);
+  if (key === "r") return toNumber(a.resultR) - toNumber(b.resultR);
+  if (key === "pl") return tradePl(a) - tradePl(b);
+  if (key === "discipline") return toNumber(a.discipline) - toNumber(b.discipline);
+  return 0;
+}
+
+function sortTradesForTable(list) {
+  const direction = tradeSort.direction === "asc" ? 1 : -1;
+  return [...list].sort((a, b) => {
+    const primary = compareTradesByKey(a, b, tradeSort.key);
+    if (primary !== 0) return primary * direction;
+    const fallback = compareTradesByKey(a, b, "datetime");
+    if (fallback !== 0) return fallback * -1;
+    return compareTradeText(b.id, a.id);
+  });
+}
+
+function syncTradeSortHeaders() {
+  $("[data-sort-key]").forEach((button) => {
+    const active = button.dataset.sortKey === tradeSort.key;
+    button.classList.toggle("active", active);
+    button.dataset.sortIndicator = active ? (tradeSort.direction === "asc" ? "^" : "v") : "";
+    button.setAttribute("aria-sort", active ? (tradeSort.direction === "asc" ? "ascending" : "descending") : "none");
+    button.title = active ? `Sorted ${tradeSort.direction === "asc" ? "oldest/lowest first" : "newest/highest first"}` : "Sort this column";
+  });
+}
+
 function filteredTrades() {
   const query = $("#searchInput").value.trim().toLowerCase();
   const outcome = $("#outcomeFilter").value;
   const setup = $("#setupFilter").value;
 
-  return trades
-    .filter((trade) => {
+  return sortTradesForTable(
+    trades.filter((trade) => {
       const haystack = [
+        trade.date,
+        tradeOpenTime(trade),
         trade.pair,
         trade.session,
         trade.direction,
@@ -2568,20 +2636,22 @@ function filteredTrades() {
       const matchesSetup = setup === "all" || trade.setup === setup;
       return matchesQuery && matchesOutcome && matchesSetup;
     })
-    .sort((a, b) => b.date.localeCompare(a.date));
+  );
 }
 
 function renderTable() {
   const table = $("#tradeTable");
   const list = filteredTrades();
+  syncTradeSortHeaders();
   table.innerHTML = "";
   $("#emptyJournal").classList.toggle("visible", list.length === 0);
 
   list.forEach((trade) => {
     const outcome = getOutcome(trade.resultR);
+    const openTime = tradeOpenTime(trade);
     const row = document.createElement("tr");
     row.innerHTML = `
-      <td>${formatDate(trade.date)}</td>
+      <td class="trade-date-cell">${formatDate(trade.date)}${openTime ? `<br><small>${escapeHtml(openTime)}</small>` : ""}</td>
       <td><strong>${escapeHtml(trade.pair)}</strong><br><small>${escapeHtml(trade.session)}</small></td>
       <td>${escapeHtml(trade.direction)}</td>
       <td>${escapeHtml(trade.setup)}</td>
@@ -3718,6 +3788,7 @@ function readTradeForm() {
   return {
     id: data.get("id") || crypto.randomUUID(),
     date: data.get("date"),
+    openTime: normalizeTimeValue(data.get("openTime")),
     pair: normalizePair(data.get("pair")),
     session: data.get("session"),
     direction,
@@ -3761,6 +3832,7 @@ function fillTradeForm(trade) {
   renderPairOptions(trade.pair);
   form.elements.id.value = trade.id;
   form.elements.date.value = trade.date;
+  form.elements.openTime.value = tradeOpenTime(trade);
   form.elements.pair.value = normalizePair(trade.pair);
   if (!form.elements.pair.value) form.elements.pair.value = defaultPair;
   syncPairTicket(form.elements.pair.value);
@@ -3794,7 +3866,8 @@ function resetTradeForm() {
   pendingMt5OrderId = "";
   form.reset();
   form.elements.id.value = "";
-  form.elements.date.value = new Date().toISOString().slice(0, 10);
+  form.elements.date.value = localDateKey();
+  form.elements.openTime.value = "";
   form.elements.pair.value = defaultPair;
   syncPairTicket(defaultPair);
   form.elements.commissionPerLot.value = settings.commissionPerLot;
@@ -3900,6 +3973,7 @@ function downloadFile(filename, content, type) {
 function exportCsv() {
   const headers = [
     "date",
+    "openTime",
     "pair",
     "session",
     "direction",
@@ -4228,6 +4302,18 @@ function bindEvents() {
 
   ["searchInput", "outcomeFilter", "setupFilter"].forEach((id) => {
     $(`#${id}`).addEventListener("input", renderTable);
+  });
+
+  $("[data-sort-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.sortKey || "datetime";
+      if (tradeSort.key === key) {
+        tradeSort.direction = tradeSort.direction === "asc" ? "desc" : "asc";
+      } else {
+        tradeSort = { key, direction: key === "datetime" ? "desc" : "asc" };
+      }
+      renderTable();
+    });
   });
 
   const form = $("#tradeForm");

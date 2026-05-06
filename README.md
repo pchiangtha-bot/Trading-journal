@@ -91,6 +91,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - Supabase email/password cloud sync with local-profile migration and realtime updates across devices
 - MT5 desktop closed-position bridge with review-before-record inbox
 - MT5 history sync requests from PC or iPhone, executed when an MT5 desktop bridge is online
+- Sortable trade history headers with opening time support keep the journal ordered by real execution timing.
 - MT5 mobile closed-position relay setup for Android/iOS payloads into the same realtime inbox
 
 ## Market Chart Notes
