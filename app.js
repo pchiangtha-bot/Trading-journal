@@ -1277,13 +1277,29 @@ function mt5RawTimestampSeconds(value) {
   return numeric > 100000000000 ? Math.floor(numeric / 1000) : Math.floor(numeric);
 }
 
-function mt5ServerDateFromRaw(value) {
+function mt5ServerDateFromRaw(value, offsetMinutes = 0) {
   const seconds = mt5RawTimestampSeconds(value);
-  return seconds === null ? null : new Date(seconds * 1000);
+  return seconds === null ? null : new Date((seconds - offsetMinutes * 60) * 1000);
 }
 
-function mt5ServerDateKeyFromRaw(value) {
-  const date = mt5ServerDateFromRaw(value);
+function mt5OrderSourceOffsetMinutes(order) {
+  const raw = mt5OrderRaw(order);
+  if (mt5OrderSource(order) === "History") return 60;
+  const explicitOffset = parseOptionalNumber(firstValue(
+    raw.server_utc_offset_minutes,
+    raw.mt5_server_utc_offset_minutes,
+    raw.broker_utc_offset_minutes,
+    raw.server_timezone_offset_minutes
+  ));
+  if (Number.isFinite(explicitOffset)) return explicitOffset;
+  return 180;
+}
+
+function mt5OrderCorrectedDate(order, kind = "closed") {
+  return mt5ServerDateFromRaw(mt5OrderRawTime(order, kind), mt5OrderSourceOffsetMinutes(order));
+}
+
+function mt5DateKeyFromDate(date) {
   if (!date) return "";
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -1291,16 +1307,15 @@ function mt5ServerDateKeyFromRaw(value) {
   return `${year}-${month}-${day}`;
 }
 
-function mt5ServerTimeKeyFromRaw(value) {
-  const date = mt5ServerDateFromRaw(value);
+function mt5TimeKeyFromDate(date) {
   if (!date) return "";
   const hours = String(date.getUTCHours()).padStart(2, "0");
   const minutes = String(date.getUTCMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
 }
 
-function formatMt5ServerDateTime(value) {
-  const date = mt5ServerDateFromRaw(value);
+function formatMt5CorrectedDateTime(order, kind = "closed") {
+  const date = mt5OrderCorrectedDate(order, kind);
   if (!date) return "";
   return date.toLocaleString("en-US", {
     month: "short",
@@ -1319,16 +1334,16 @@ function mt5OrderRawTime(order, kind = "closed") {
 }
 
 function mt5OrderBrokerDateKey(order, kind = "closed") {
-  return mt5ServerDateKeyFromRaw(mt5OrderRawTime(order, kind));
+  return mt5DateKeyFromDate(mt5OrderCorrectedDate(order, kind));
 }
 
 function mt5OrderBrokerTimeKey(order, kind = "closed") {
-  return mt5ServerTimeKeyFromRaw(mt5OrderRawTime(order, kind));
+  return mt5TimeKeyFromDate(mt5OrderCorrectedDate(order, kind));
 }
 
 function mt5OrderDisplayDateTime(order, kind = "closed") {
-  const serverTime = formatMt5ServerDateTime(mt5OrderRawTime(order, kind));
-  return serverTime ? `${serverTime} MT5` : formatDateTime(kind === "open" ? order.opened_at : order.closed_at);
+  const correctedTime = formatMt5CorrectedDateTime(order, kind);
+  return correctedTime ? `${correctedTime} MT5` : formatDateTime(kind === "open" ? order.opened_at : order.closed_at);
 }
 
 function dateKeyFromTimestamp(value) {
