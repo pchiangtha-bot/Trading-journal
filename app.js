@@ -1240,7 +1240,7 @@ async function fetchMt5DetectedOrders(options = {}) {
     return;
   }
 
-  const reviewMode = Boolean(historyReview);
+  const reviewMode = Boolean(historyReview || mt5HistoryReviewRange.active);
   let query = supabaseClient
     .from(mt5OrderTable)
     .select("*")
@@ -1340,47 +1340,42 @@ function mt5ServerDateFromRaw(value, offsetMinutes = 0) {
   return seconds === null ? null : new Date((seconds - offsetMinutes * 60) * 1000);
 }
 
-function mt5OrderSourceOffsetMinutes(order) {
-  const raw = mt5OrderRaw(order);
-  if (mt5OrderSource(order) === "History") return 180;
-  const explicitOffset = parseOptionalNumber(firstValue(
-    raw.server_utc_offset_minutes,
-    raw.mt5_server_utc_offset_minutes,
-    raw.broker_utc_offset_minutes,
-    raw.server_timezone_offset_minutes
-  ));
-  if (Number.isFinite(explicitOffset)) return explicitOffset;
-  return 180;
+function mt5OrderSourceOffsetMinutes() {
+  return 0;
 }
 
-function mt5OrderCorrectedDate(order, kind = "closed") {
+function mt5OrderStoredDate(order, kind = "closed") {
+  const value = kind === "open" ? order?.opened_at : order?.closed_at;
+  if (value) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date;
+  }
   return mt5ServerDateFromRaw(mt5OrderRawTime(order, kind), mt5OrderSourceOffsetMinutes(order));
 }
 
+function mt5OrderCorrectedDate(order, kind = "closed") {
+  return mt5OrderStoredDate(order, kind);
+}
+
 function mt5DateKeyFromDate(date) {
-  if (!date) return "";
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(date.getUTCDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return date ? localDateKey(date) : "";
 }
 
 function mt5TimeKeyFromDate(date) {
   if (!date) return "";
-  const hours = String(date.getUTCHours()).padStart(2, "0");
-  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
   return `${hours}:${minutes}`;
 }
 
 function formatMt5CorrectedDateTime(order, kind = "closed") {
   const date = mt5OrderCorrectedDate(order, kind);
   if (!date) return "";
-  return date.toLocaleString("en-US", {
+  return date.toLocaleString([], {
     month: "short",
     day: "numeric",
     hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC"
+    minute: "2-digit"
   });
 }
 
@@ -4466,7 +4461,12 @@ function bindEvents() {
   if (copyMt5BridgeButton) copyMt5BridgeButton.addEventListener("click", copyMt5BridgeSetup);
 
   const refreshMt5OrdersButton = $("#refreshMt5OrdersBtn");
-  if (refreshMt5OrdersButton) refreshMt5OrdersButton.addEventListener("click", () => fetchMt5DetectedOrders());
+  if (refreshMt5OrdersButton) {
+    refreshMt5OrdersButton.addEventListener("click", () => {
+      mt5HistoryReviewRange = { ...mt5HistoryReviewRange, active: false };
+      fetchMt5DetectedOrders();
+    });
+  }
 
   const mt5InboxList = $("#mt5InboxList");
   if (mt5InboxList) {

@@ -35,17 +35,12 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function timestampOrNull(value: unknown, serverOffsetMinutes?: unknown) {
+function timestampOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
   const numeric = Number(value);
-  let date: Date;
-  if (Number.isFinite(numeric)) {
-    const millis = numeric > 100000000000 ? numeric : numeric * 1000;
-    const offset = numberOrNull(serverOffsetMinutes);
-    date = new Date(millis - (offset ?? 0) * 60000);
-  } else {
-    date = new Date(String(value));
-  }
+  const date = Number.isFinite(numeric)
+    ? new Date(numeric > 100000000000 ? numeric : numeric * 1000)
+    : new Date(String(value));
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 function textOrNull(value: unknown) {
@@ -215,13 +210,6 @@ Deno.serve(async (req) => {
 
   if (!externalId) return jsonResponse({ error: "Missing external position id." }, 400);
 
-  const serverOffsetMinutes = firstValue(
-    payload.server_utc_offset_minutes,
-    payload.mt5_server_utc_offset_minutes,
-    payload.broker_utc_offset_minutes,
-    payload.server_timezone_offset_minutes
-  );
-
   const record = {
     user_id: bridge.user_id,
     external_id: externalId,
@@ -229,8 +217,8 @@ Deno.serve(async (req) => {
     broker_server: textOrNull(payload.broker_server),
     symbol: textOrNull(payload.symbol) || "UNKNOWN",
     direction: cleanDirection(firstValue(payload.direction, payload.side, payload.type)),
-    opened_at: timestampOrNull(firstValue(payload.open_time, payload.opened_at), serverOffsetMinutes),
-    closed_at: timestampOrNull(firstValue(payload.close_time, payload.closed_at, payload.time), serverOffsetMinutes) || new Date().toISOString(),
+    opened_at: timestampOrNull(firstValue(payload.open_time, payload.opened_at)),
+    closed_at: timestampOrNull(firstValue(payload.close_time, payload.closed_at, payload.time)) || new Date().toISOString(),
     lot_size: numberOrNull(firstValue(payload.lot_size, payload.volume, payload.lots)),
     entry_price: numberOrNull(firstValue(payload.entry_price, payload.open_price)),
     exit_price: numberOrNull(firstValue(payload.exit_price, payload.close_price)),

@@ -135,3 +135,5 @@ MT5 mobile can create the request through the web app, but MT5 mobile cannot rea
 
 
 - V1.4.8: MT5 Display History time now subtracts 3 hours; realtime tracking still uses the sent MT5 server offset and falls back to 3 hours.
+
+- V1.4.9: MT5 timestamps now use the default stored time with no hour subtraction, and Display History stays active until normal Refresh is pressed.
