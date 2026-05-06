@@ -1472,7 +1472,7 @@ function prefillTradeFromMt5Order(orderId) {
   const trade = mt5OrderToTrade(order);
   pendingMt5OrderId = order.id;
   fillTradeForm(trade);
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  scrollTradeTicketIntoView();
   showToast("MT5 position loaded into the trade ticket.");
 }
 
@@ -3969,6 +3969,18 @@ function readTradeForm() {
   };
 }
 
+function scrollTradeTicketIntoView() {
+  const ticketPanel = $("#tradeForm")?.closest(".panel");
+  if (!ticketPanel) return;
+  const rect = ticketPanel.getBoundingClientRect();
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const comfortableTop = 16;
+  const comfortableBottom = Math.max(viewportHeight - 40, comfortableTop);
+  const alreadyComfortable = rect.top >= comfortableTop && rect.top <= comfortableBottom && rect.bottom > 120;
+  if (alreadyComfortable) return;
+  ticketPanel.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+}
+
 function fillTradeForm(trade) {
   const form = $("#tradeForm");
   ensurePairAvailable(trade.pair, trade.contractSize);
@@ -4420,7 +4432,7 @@ function bindEvents() {
 
     if (button.dataset.action === "edit") {
       fillTradeForm(trade);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      scrollTradeTicketIntoView();
     }
 
     if (button.dataset.action === "delete" && confirm("Delete this trade?")) {
