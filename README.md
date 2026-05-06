@@ -88,7 +88,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - Sidebar TradingView mini symbol chart, defaulting to Pepperstone XAU/USD, with changeable pair and range controls
 - Sidebar daylight-saving status for New York, London, and Sydney session timing
 - Local account profiles with password-gated sign in, account switching, and separated trades, strategies, custom pairs, and settings per account
-- Supabase email/password cloud sync with local-profile migration and realtime updates across devices
+- Supabase email/password cloud sync with local-profile migration and realtime updates across devices. Email Sync now force-saves the current journal and reports timeout errors instead of staying stuck.
 - MT5 desktop closed-position bridge with review-before-record inbox
 - MT5 history sync requests from PC or iPhone, executed when an MT5 desktop bridge is online
 - Sortable trade history headers with opening time support keep the journal ordered by real execution timing.

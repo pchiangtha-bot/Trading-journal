@@ -784,6 +784,15 @@ function mt5BridgeSetupText(token, source = "desktop") {
   ].join("\n");
 }
 
+function withCloudTimeout(task, message = "Cloud request timed out. Check Supabase connection and try again.", timeoutMs = 18000) {
+  return Promise.race([
+    task,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs);
+    })
+  ]);
+}
+
 function setCloudStatus(label, detail = "", tone = "muted") {
   cloudSyncState = { label, detail, tone };
   syncCloudUi();
@@ -975,9 +984,12 @@ function cloudPayloadFromSnapshot(snapshot) {
 async function upsertCloudSnapshot(snapshot = currentJournalSnapshot(), reason = "save") {
   if (!supabaseClient || !cloudUser) return false;
   setCloudStatus("Syncing", reason === "migration" ? "Uploading local profile to cloud." : "Saving latest journal to cloud.", "pending");
-  const { error } = await supabaseClient
-    .from(cloudProfileTable)
-    .upsert(cloudPayloadFromSnapshot(snapshot), { onConflict: "user_id" });
+  const { error } = await withCloudTimeout(
+    supabaseClient
+      .from(cloudProfileTable)
+      .upsert(cloudPayloadFromSnapshot(snapshot), { onConflict: "user_id" }),
+    "Cloud save timed out. Check internet/Supabase, then press Email Sync again."
+  );
 
   if (error) {
     setCloudStatus("Error", friendlyCloudError(error), "error");
@@ -993,7 +1005,9 @@ function queueCloudSave(reason = "save") {
   clearTimeout(cloudSaveTimer);
   setCloudStatus("Queued", "Saving your latest edit to cloud.", "pending");
   cloudSaveTimer = setTimeout(() => {
-    upsertCloudSnapshot(currentJournalSnapshot(), reason).catch(() => {});
+    upsertCloudSnapshot(currentJournalSnapshot(), reason).catch((error) => {
+      setCloudStatus("Error", friendlyCloudError(error), "error");
+    });
   }, 650);
 }
 
@@ -1002,11 +1016,14 @@ async function fetchCloudProfile(options = {}) {
   if (!supabaseClient || !cloudUser) return null;
   if (!silent) setCloudStatus("Syncing", "Loading latest cloud journal.", "pending");
 
-  const { data, error } = await supabaseClient
-    .from(cloudProfileTable)
-    .select("*")
-    .eq("user_id", cloudUser.id)
-    .maybeSingle();
+  const { data, error } = await withCloudTimeout(
+    supabaseClient
+      .from(cloudProfileTable)
+      .select("*")
+      .eq("user_id", cloudUser.id)
+      .maybeSingle(),
+    "Cloud load timed out. Check internet/Supabase, then try again."
+  );
 
   if (error) {
     setCloudStatus("Error", friendlyCloudError(error), "error");
@@ -1209,7 +1226,7 @@ async function fetchMt5DetectedOrders(options = {}) {
     return;
   }
 
-  const reviewMode = historyReview || mt5HistoryReviewRange.active;
+  const reviewMode = Boolean(historyReview);
   let query = supabaseClient
     .from(mt5OrderTable)
     .select("*")
@@ -1226,7 +1243,10 @@ async function fetchMt5DetectedOrders(options = {}) {
     query = query.eq("status", "new");
   }
 
-  const { data, error } = await query;
+  const { data, error } = await withCloudTimeout(
+    query,
+    "MT5 detected-order refresh timed out. Check Supabase connection and bridge status."
+  );
 
   if (error) {
     if (!silent) showToast(friendlyCloudError(error));
@@ -4374,7 +4394,7 @@ function bindEvents() {
   const syncNowButton = $("#syncNowBtn");
   if (syncNowButton) {
     syncNowButton.addEventListener("click", () => {
-      fetchCloudProfile({ apply: true, createIfMissing: true }).catch((error) => showToast(friendlyCloudError(error)));
+      upsertCloudSnapshot(currentJournalSnapshot(), "manual").then(() => fetchMt5DetectedOrders({ silent: true })).catch((error) => showToast(friendlyCloudError(error)));
     });
   }
 
