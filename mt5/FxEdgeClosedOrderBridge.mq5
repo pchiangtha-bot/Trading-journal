@@ -332,20 +332,30 @@ bool UploadClosedHistoryPeriod(string startText, string endText, string historyR
       return(false);
      }
 
-   int sent = 0;
+   ulong exitDeals[];
    int total = HistoryDealsTotal();
-   for(int i = 0; i < total && sent < MaxHistoryRecords; i++)
+   for(int i = 0; i < total; i++)
      {
-      ulong deal = HistoryDealGetTicket(i);
-      if(deal == 0)
-         continue;
-      long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
-      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
-         continue;
+       ulong deal = HistoryDealGetTicket(i);
+       if(deal == 0)
+          continue;
+       long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
+       if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+          continue;
 
-      string payload = "";
-      string dedupeKey = "";
-      if(!BuildClosedPositionPayload(deal, payload, dedupeKey, "mt5-history", historyRequestId))
+       int exitCount = ArraySize(exitDeals);
+       ArrayResize(exitDeals, exitCount + 1);
+       exitDeals[exitCount] = deal;
+     }
+
+   int sent = 0;
+   for(int i = 0; i < ArraySize(exitDeals) && sent < MaxHistoryRecords; i++)
+     {
+       ulong deal = exitDeals[i];
+
+       string payload = "";
+       string dedupeKey = "";
+       if(!BuildClosedPositionPayload(deal, payload, dedupeKey, "mt5-history", historyRequestId))
          continue;
       if(AlreadySent(dedupeKey))
          continue;
@@ -356,7 +366,7 @@ bool UploadClosedHistoryPeriod(string startText, string endText, string historyR
         }
      }
 
-   PrintFormat("FX Edge Journal history sync sent %d closed positions.", sent);
+   PrintFormat("FX Edge Journal history sync selected %d closed exit deals and sent %d.", ArraySize(exitDeals), sent);
    if(historyRequestId != "") CompleteHistoryRequest(historyRequestId, sent, "done", "");
    return(true);
   }
