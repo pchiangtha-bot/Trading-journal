@@ -260,6 +260,7 @@ let isApplyingCloudSnapshot = false;
 let cloudClientId = "";
 let mt5DetectedOrders = [];
 let mt5InboxState = { kind: "idle", message: "" };
+let mt5RealtimeHiddenKeys = new Set();
 let pendingMt5OrderId = "";
 let latestMt5BridgeSetup = "";
 let mt5HistoryReviewRange = { active: false, start: "", end: "" };
@@ -1222,14 +1223,10 @@ function subscribeMt5Orders() {
         filter: `user_id=eq.${cloudUser.id}`
       },
       () => {
-        fetchMt5DetectedOrders({ silent: true, forceRealtime: true }).catch(() => {});
+        if (!mt5HistoryReviewRange.active) fetchMt5DetectedOrders({ silent: true, forceRealtime: true }).catch(() => {});
       }
     )
-    .subscribe((status) => {
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        setMt5InboxState("error", "MT5 realtime listener paused. Press Refresh to check Supabase for closed positions.");
-      }
-    });
+    .subscribe(() => {});
 }
 
 async function fetchMt5DetectedOrders(options = {}) {
@@ -1302,7 +1299,8 @@ async function fetchMt5DetectedOrders(options = {}) {
     return;
   }
 
-  const { visibleOrders, duplicateCount } = await skipRecordedMt5Orders(fetchedOrders, { silent });
+  const realtimeOrders = fetchedOrders.filter((order) => !mt5OrderHasAnyKey(order, mt5RealtimeHiddenKeys));
+  const { visibleOrders, duplicateCount } = await skipRecordedMt5Orders(realtimeOrders, { silent });
   mt5DetectedOrders = visibleOrders;
   mt5InboxState = {
     kind: mt5DetectedOrders.length ? "ready" : "empty",
@@ -1497,6 +1495,15 @@ function tradeNotesMentionMt5Keys(trade, keys) {
   return keys.some((key) => key.length >= 4 && notes.includes(key.toLowerCase()));
 }
 
+function mt5OrderHasAnyKey(order, keySet) {
+  if (!keySet || !keySet.size) return false;
+  return mt5OrderExternalKeys(order).some((key) => keySet.has(key.toLowerCase()));
+}
+
+function hideMt5OrderFromRealtime(order) {
+  mt5OrderExternalKeys(order).forEach((key) => mt5RealtimeHiddenKeys.add(key.toLowerCase()));
+}
+
 function isMt5OrderAlreadyRecorded(order) {
   const orderKeys = mt5OrderExternalKeys(order);
   if (!orderKeys.length) return false;
@@ -1648,6 +1655,8 @@ function prefillTradeFromMt5Order(orderId) {
 
 async function markMt5OrderStatus(orderId, status = "recorded") {
   if (!supabaseClient || !cloudUser || !orderId) return;
+  const order = mt5OrderById(orderId);
+  if (status === "ignored" && order) hideMt5OrderFromRealtime(order);
   const { error } = await supabaseClient
     .from(mt5OrderTable)
     .update({ status, updated_at: new Date().toISOString() })
@@ -1660,6 +1669,9 @@ async function markMt5OrderStatus(orderId, status = "recorded") {
   }
 
   mt5DetectedOrders = mt5DetectedOrders.filter((order) => order.id !== orderId);
+  if (!mt5DetectedOrders.length && mt5InboxState.kind === "ready") {
+    mt5InboxState = { kind: "empty", message: status === "ignored" ? "Ignored order hidden. Use Display History to see it again." : "No orders waiting." };
+  }
   renderMt5Inbox();
 }
 

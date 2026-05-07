@@ -141,3 +141,5 @@ MT5 mobile can create the request through the web app, but MT5 mobile cannot rea
 - V1.5.0: Trade Ticket session now auto-fills from the opening time using DST-aware London, New York, Tokyo, and Sydney market hours.
 
 - V1.5.1: Ignored MT5 orders stay hidden from realtime refreshes until Display History is used, and live tracked orders convert broker-server timestamps to the device local timezone while History orders stay unchanged.
+
+- V1.5.2: MT5 realtime subscription pauses no longer replace the inbox with an error, Display History stays visible while active, and ignored orders are locally hidden from normal realtime refreshes.
