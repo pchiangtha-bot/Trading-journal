@@ -35,6 +35,10 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function firstValue(...values: unknown[]) {
+  return values.find((value) => value !== null && value !== undefined && value !== "");
+}
+
 function timestampOrNull(value: unknown, serverOffsetMinutes = 0) {
   if (value === null || value === undefined || value === "") return null;
   const numeric = Number(value);
@@ -66,10 +70,6 @@ function payloadServerOffsetMinutes(payload: Record<string, unknown>) {
 function textOrNull(value: unknown) {
   const text = String(value ?? "").trim();
   return text || null;
-}
-
-function firstValue(...values: unknown[]) {
-  return values.find((value) => value !== null && value !== undefined && value !== "");
 }
 
 function cleanDirection(value: unknown) {

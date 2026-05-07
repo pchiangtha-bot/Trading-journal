@@ -1278,41 +1278,46 @@ async function fetchMt5DetectedOrders(options = {}) {
     return;
   }
 
-  const previousCount = mt5DetectedOrders.length;
-  const fetchedOrders = Array.isArray(data) ? data : [];
-  if (reviewMode) {
-    const reviewOrders = fetchedOrders.filter((order) => {
-      const orderDate = orderDateKeyForHistoryReview(order);
-      return (!mt5HistoryReviewRange.start || orderDate >= mt5HistoryReviewRange.start)
-        && (!mt5HistoryReviewRange.end || orderDate <= mt5HistoryReviewRange.end);
-    });
-    mt5DetectedOrders = reviewOrders.map((order) => ({
-      ...order,
-      alreadyRecorded: isMt5OrderAlreadyRecorded(order)
-    }));
+  try {
+    const previousCount = mt5DetectedOrders.length;
+    const fetchedOrders = Array.isArray(data) ? data : [];
+    if (reviewMode) {
+      const reviewOrders = fetchedOrders.filter((order) => {
+        const orderDate = orderDateKeyForHistoryReview(order);
+        return (!mt5HistoryReviewRange.start || orderDate >= mt5HistoryReviewRange.start)
+          && (!mt5HistoryReviewRange.end || orderDate <= mt5HistoryReviewRange.end);
+      });
+      mt5DetectedOrders = reviewOrders.map((order) => ({
+        ...order,
+        alreadyRecorded: isMt5OrderAlreadyRecorded(order)
+      }));
+      mt5InboxState = {
+        kind: mt5DetectedOrders.length ? "ready" : "empty",
+        message: mt5DetectedOrders.length ? "" : "No MT5 orders found in that history period."
+      };
+      renderMt5Inbox();
+      if (!silent) showToast("History display loaded " + mt5DetectedOrders.length + " " + (mt5DetectedOrders.length === 1 ? "order" : "orders") + ".");
+      return;
+    }
+
+    const realtimeOrders = fetchedOrders.filter((order) => !mt5OrderHasAnyKey(order, mt5RealtimeHiddenKeys));
+    const { visibleOrders, duplicateCount } = await skipRecordedMt5Orders(realtimeOrders, { silent });
+    mt5DetectedOrders = visibleOrders;
     mt5InboxState = {
       kind: mt5DetectedOrders.length ? "ready" : "empty",
-      message: mt5DetectedOrders.length ? "" : "No MT5 orders found in that history period."
+      message: duplicateCount
+        ? duplicateCount + " detected MT5 " + (duplicateCount === 1 ? "order is" : "orders are") + " already in Trade History."
+        : "No new closed positions. Keep the MT5 bridge attached, then press Refresh after a position closes."
     };
     renderMt5Inbox();
-    if (!silent) showToast("History display loaded " + mt5DetectedOrders.length + " " + (mt5DetectedOrders.length === 1 ? "order" : "orders") + ".");
-    return;
-  }
-
-  const realtimeOrders = fetchedOrders.filter((order) => !mt5OrderHasAnyKey(order, mt5RealtimeHiddenKeys));
-  const { visibleOrders, duplicateCount } = await skipRecordedMt5Orders(realtimeOrders, { silent });
-  mt5DetectedOrders = visibleOrders;
-  mt5InboxState = {
-    kind: mt5DetectedOrders.length ? "ready" : "empty",
-    message: duplicateCount
-      ? duplicateCount + " detected MT5 " + (duplicateCount === 1 ? "order is" : "orders are") + " already in Trade History."
-      : "No new closed positions. Keep the MT5 bridge attached, then press Refresh after a position closes."
-  };
-  renderMt5Inbox();
-  if (duplicateCount && !silent) {
-    showToast(`${duplicateCount} MT5 ${duplicateCount === 1 ? "order is" : "orders are"} already in Trade History and skipped.`);
-  } else if (mt5DetectedOrders.length > previousCount && !silent) {
-    showToast("MT5 closed position detected.");
+    if (duplicateCount && !silent) {
+      showToast(duplicateCount + " MT5 " + (duplicateCount === 1 ? "order is" : "orders are") + " already in Trade History and skipped.");
+    } else if (mt5DetectedOrders.length > previousCount && !silent) {
+      showToast("MT5 closed position detected.");
+    }
+  } catch (error) {
+    setMt5InboxState("error", friendlyCloudError(error));
+    if (!silent) showToast(friendlyCloudError(error));
   }
 }
 
@@ -1325,6 +1330,10 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function firstValue(...values) {
+  return values.find((value) => value !== null && value !== undefined && value !== "");
 }
 
 function mt5RawTimestampSeconds(value) {
