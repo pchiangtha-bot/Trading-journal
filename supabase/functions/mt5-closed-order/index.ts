@@ -35,13 +35,33 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function timestampOrNull(value: unknown) {
+function timestampOrNull(value: unknown, serverOffsetMinutes = 0) {
   if (value === null || value === undefined || value === "") return null;
   const numeric = Number(value);
+  const offset = Number.isFinite(Number(serverOffsetMinutes)) ? Number(serverOffsetMinutes) : 0;
   const date = Number.isFinite(numeric)
-    ? new Date(numeric > 100000000000 ? numeric : numeric * 1000)
+    ? new Date((numeric > 100000000000 ? numeric : numeric * 1000) - offset * 60000)
     : new Date(String(value));
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function payloadSourceText(payload: Record<string, unknown>) {
+  return String(firstValue(payload.client_platform, payload.platform, payload.mobile_engine, payload.source) || "").toLowerCase();
+}
+
+function isHistoryPayload(payload: Record<string, unknown>) {
+  return payloadSourceText(payload).includes("history");
+}
+
+function payloadServerOffsetMinutes(payload: Record<string, unknown>) {
+  if (isHistoryPayload(payload)) return 0;
+  const explicitOffset = numberOrNull(firstValue(
+    payload.server_utc_offset_minutes,
+    payload.mt5_server_utc_offset_minutes,
+    payload.broker_utc_offset_minutes,
+    payload.server_timezone_offset_minutes
+  ));
+  return explicitOffset ?? 180;
 }
 function textOrNull(value: unknown) {
   const text = String(value ?? "").trim();
@@ -210,6 +230,8 @@ Deno.serve(async (req) => {
 
   if (!externalId) return jsonResponse({ error: "Missing external position id." }, 400);
 
+  const serverOffsetMinutes = payloadServerOffsetMinutes(payload);
+
   const record = {
     user_id: bridge.user_id,
     external_id: externalId,
@@ -217,8 +239,8 @@ Deno.serve(async (req) => {
     broker_server: textOrNull(payload.broker_server),
     symbol: textOrNull(payload.symbol) || "UNKNOWN",
     direction: cleanDirection(firstValue(payload.direction, payload.side, payload.type)),
-    opened_at: timestampOrNull(firstValue(payload.open_time, payload.opened_at)),
-    closed_at: timestampOrNull(firstValue(payload.close_time, payload.closed_at, payload.time)) || new Date().toISOString(),
+    opened_at: timestampOrNull(firstValue(payload.open_time, payload.opened_at), serverOffsetMinutes),
+    closed_at: timestampOrNull(firstValue(payload.close_time, payload.closed_at, payload.time), serverOffsetMinutes) || new Date().toISOString(),
     lot_size: numberOrNull(firstValue(payload.lot_size, payload.volume, payload.lots)),
     entry_price: numberOrNull(firstValue(payload.entry_price, payload.open_price)),
     exit_price: numberOrNull(firstValue(payload.exit_price, payload.close_price)),
@@ -232,10 +254,22 @@ Deno.serve(async (req) => {
     updated_at: new Date().toISOString()
   };
 
+  const { data: existingOrder, error: existingOrderError } = await supabase
+    .from("mt5_detected_orders")
+    .select("id,status")
+    .eq("user_id", bridge.user_id)
+    .eq("external_id", externalId)
+    .maybeSingle();
+
+  if (existingOrderError) return jsonResponse({ error: existingOrderError.message }, 500);
+  const preservedStatus = ["ignored", "recorded"].includes(String(existingOrder?.status || ""))
+    ? String(existingOrder?.status)
+    : "";
+
   const duplicateCheck = await journalAlreadyHasMt5Record(supabase, bridge.user_id, mt5RecordKeys(record, payload));
   if (duplicateCheck.error) return jsonResponse({ error: duplicateCheck.error }, 500);
   if (duplicateCheck.duplicate) {
-    const recordedRecord = { ...record, status: "recorded", updated_at: new Date().toISOString() };
+    const recordedRecord = { ...record, status: preservedStatus || "recorded", updated_at: new Date().toISOString() };
     const { error: upsertRecordedError } = await supabase
       .from("mt5_detected_orders")
       .upsert(recordedRecord, { onConflict: "user_id,external_id" });
@@ -250,7 +284,7 @@ Deno.serve(async (req) => {
 
   const { data: inserted, error: insertError } = await supabase
     .from("mt5_detected_orders")
-    .upsert(record, { onConflict: "user_id,external_id" })
+    .upsert(preservedStatus ? { ...record, status: preservedStatus } : record, { onConflict: "user_id,external_id" })
     .select("id")
     .single();
 

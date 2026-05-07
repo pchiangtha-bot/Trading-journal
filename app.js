@@ -1222,7 +1222,7 @@ function subscribeMt5Orders() {
         filter: `user_id=eq.${cloudUser.id}`
       },
       () => {
-        fetchMt5DetectedOrders({ silent: true }).catch(() => {});
+        fetchMt5DetectedOrders({ silent: true, forceRealtime: true }).catch(() => {});
       }
     )
     .subscribe((status) => {
@@ -1233,14 +1233,14 @@ function subscribeMt5Orders() {
 }
 
 async function fetchMt5DetectedOrders(options = {}) {
-  const { silent = false, historyReview = false } = options;
+  const { silent = false, historyReview = false, forceRealtime = false } = options;
   if (!supabaseClient || !cloudUser) {
     mt5DetectedOrders = [];
     renderMt5Inbox();
     return;
   }
 
-  const reviewMode = Boolean(historyReview || mt5HistoryReviewRange.active);
+  const reviewMode = !forceRealtime && Boolean(historyReview || mt5HistoryReviewRange.active);
   let query = supabaseClient
     .from(mt5OrderTable)
     .select("*")
@@ -1340,17 +1340,36 @@ function mt5ServerDateFromRaw(value, offsetMinutes = 0) {
   return seconds === null ? null : new Date((seconds - offsetMinutes * 60) * 1000);
 }
 
-function mt5OrderSourceOffsetMinutes() {
-  return 0;
+function mt5OrderSourceOffsetMinutes(order) {
+  if (mt5OrderSource(order) === "History") return 0;
+  const raw = mt5OrderRaw(order);
+  const explicitOffset = parseOptionalNumber(firstValue(
+    raw.server_utc_offset_minutes,
+    raw.mt5_server_utc_offset_minutes,
+    raw.broker_utc_offset_minutes,
+    raw.server_timezone_offset_minutes
+  ));
+  return Number.isFinite(explicitOffset) ? explicitOffset : 180;
 }
 
 function mt5OrderStoredDate(order, kind = "closed") {
-  const value = kind === "open" ? order?.opened_at : order?.closed_at;
-  if (value) {
-    const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) return date;
+  const storedValue = kind === "open" ? order?.opened_at : order?.closed_at;
+  const isHistory = mt5OrderSource(order) === "History";
+  if (isHistory && storedValue) {
+    const storedDate = new Date(storedValue);
+    if (!Number.isNaN(storedDate.getTime())) return storedDate;
   }
-  return mt5ServerDateFromRaw(mt5OrderRawTime(order, kind), mt5OrderSourceOffsetMinutes(order));
+
+  const rawDate = mt5ServerDateFromRaw(mt5OrderRawTime(order, kind), mt5OrderSourceOffsetMinutes(order));
+  if (rawDate) return rawDate;
+
+  if (storedValue) {
+    const storedDate = new Date(storedValue);
+    if (!Number.isNaN(storedDate.getTime())) {
+      return isHistory ? storedDate : new Date(storedDate.getTime() - mt5OrderSourceOffsetMinutes(order) * 60000);
+    }
+  }
+  return null;
 }
 
 function mt5OrderCorrectedDate(order, kind = "closed") {
