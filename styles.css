@@ -972,7 +972,7 @@ input[type="range"] {
 .filter-bar {
   margin: 16px 0;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 146px 146px 150px 180px;
+  grid-template-columns: minmax(220px, 1.35fr) repeat(2, minmax(136px, 0.72fr)) minmax(140px, 0.76fr) minmax(176px, 0.9fr);
   gap: 12px;
   align-items: end;
 }
@@ -989,6 +989,10 @@ input[type="range"] {
   padding: 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+}
+
+.trade-history-filters > label {
+  min-width: 0;
 }
 
 .analytics-filter-panel {
@@ -1707,6 +1711,14 @@ td {
     margin-top: 0;
   }
 
+  .trade-history-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trade-history-filters > label:first-child {
+    grid-column: 1 / -1;
+  }
+
   .journal-layout,
   .analytics-grid,
   .analysis-panels,
@@ -1804,6 +1816,14 @@ td {
 
   .compact-input {
     width: 100%;
+  }
+
+  .trade-history-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-history-filters > label:first-child {
+    grid-column: auto;
   }
 
   .kpi-grid,
