@@ -16,43 +16,45 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Workspace navigation">
-      <div class="brand">
-        <div class="brand-mark">FX</div>
-        <div>
-          <h1>FX Edge Journal</h1>
-          <p>Trade log. Review. Strategy lab.</p>
+      <div class="sidebar-fixed-cluster">
+        <div class="brand">
+          <div class="brand-mark">FX</div>
+          <div>
+            <h1>FX Edge Journal</h1>
+            <p>Trade log. Review. Strategy lab.</p>
+          </div>
         </div>
+
+        <section class="account-panel" aria-label="Account profile">
+          <div>
+            <p class="eyebrow">Account</p>
+            <h2 id="activeAccountName">Locked</h2>
+          </div>
+          <div class="account-actions">
+            <button class="icon-button" type="button" id="switchAccountBtn" title="Switch account" aria-label="Switch account">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+            </button>
+            <button class="icon-button" type="button" id="logoutAccountBtn" title="Lock account" aria-label="Lock account">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 19V5a2 2 0 0 0-2-2h-4"/></svg>
+            </button>
+          </div>
+        </section>
+
+        <nav class="nav-tabs" aria-label="Primary">
+          <button class="nav-tab active" data-view="journal">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+            Journal
+          </button>
+          <button class="nav-tab" data-view="analytics">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-7"/></svg>
+            Analytics
+          </button>
+          <button class="nav-tab" data-view="strategy">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7l7-4zM9 12l2 2 4-5"/></svg>
+            Strategy Lab
+          </button>
+        </nav>
       </div>
-
-      <section class="account-panel" aria-label="Account profile">
-        <div>
-          <p class="eyebrow">Account</p>
-          <h2 id="activeAccountName">Locked</h2>
-        </div>
-        <div class="account-actions">
-          <button class="icon-button" type="button" id="switchAccountBtn" title="Switch account" aria-label="Switch account">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
-          </button>
-          <button class="icon-button" type="button" id="logoutAccountBtn" title="Lock account" aria-label="Lock account">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 19V5a2 2 0 0 0-2-2h-4"/></svg>
-          </button>
-        </div>
-      </section>
-
-      <nav class="nav-tabs" aria-label="Primary">
-        <button class="nav-tab active" data-view="journal">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-          Journal
-        </button>
-        <button class="nav-tab" data-view="analytics">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 5-7"/></svg>
-          Analytics
-        </button>
-        <button class="nav-tab" data-view="strategy">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7l7-4zM9 12l2 2 4-5"/></svg>
-          Strategy Lab
-        </button>
-      </nav>
 
       <section class="dst-panel" aria-labelledby="dst-title">
         <div class="section-heading">
@@ -501,6 +503,14 @@
                 <span>Search</span>
                 <input id="searchInput" placeholder="Pair, setup, tags, notes">
               </label>
+              <label class="history-date-filter">
+                <span>From</span>
+                <input type="date" id="historyStartFilter">
+              </label>
+              <label class="history-date-filter">
+                <span>To</span>
+                <input type="date" id="historyEndFilter">
+              </label>
               <label>
                 <span>Outcome</span>
                 <select id="outcomeFilter">
@@ -518,7 +528,7 @@
               </label>
             </div>
 
-            <div class="table-wrap">
+            <div class="table-wrap trade-history-scroll">
               <table>
                 <thead>
                   <tr>
@@ -577,7 +587,11 @@
                 <h3 id="chart-title">Cumulative R Curve</h3>
               </div>
               <div class="chart-controls">
-                <div class="segmented chart-period" aria-label="Cumulative R period">
+                <div class="segmented chart-metric" aria-label="Equity chart type">
+                  <button type="button" class="segment active" data-equity-metric="r">Cumulative R</button>
+                  <button type="button" class="segment" data-equity-metric="balance">Balance</button>
+                </div>
+                <div class="segmented chart-period" aria-label="Equity curve period">
                   <button type="button" class="segment active" data-period="day">Day</button>
                   <button type="button" class="segment" data-period="month">Month</button>
                   <button type="button" class="segment" data-period="year">Year</button>

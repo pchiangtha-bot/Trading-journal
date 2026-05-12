@@ -66,6 +66,17 @@ button {
   overflow-y: auto;
 }
 
+.sidebar-fixed-cluster {
+  position: sticky;
+  top: -24px;
+  z-index: 8;
+  display: grid;
+  gap: 24px;
+  padding: 24px 0 10px;
+  margin-top: -24px;
+  background: #fbfbf7;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -199,8 +210,15 @@ button {
 
 .cloud-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cloud-actions .mini-button {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .mt5-bridge-panel {
@@ -919,6 +937,10 @@ input[readonly] {
   grid-template-columns: repeat(3, minmax(64px, 1fr));
 }
 
+.chart-metric {
+  grid-template-columns: repeat(2, minmax(112px, 1fr));
+}
+
 .slider-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -937,7 +959,7 @@ input[type="range"] {
 .filter-bar {
   margin: 16px 0;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 150px 180px;
+  grid-template-columns: minmax(220px, 1fr) 146px 146px 150px 180px;
   gap: 12px;
   align-items: end;
 }
@@ -1038,6 +1060,28 @@ input[type="range"] {
 .table-wrap {
   position: relative;
   overflow-x: auto;
+}
+
+.trade-history-scroll {
+  --trade-history-head: 46px;
+  --trade-history-row: 63px;
+  max-height: calc(var(--trade-history-head) + (var(--trade-history-row) * 14));
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.trade-history-scroll table {
+  margin: 0;
+}
+
+.trade-history-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
 table {
@@ -1618,6 +1662,12 @@ td {
     padding: 16px;
   }
 
+  .sidebar-fixed-cluster {
+    top: -16px;
+    padding-top: 16px;
+    margin-top: -16px;
+  }
+
   .nav-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1662,6 +1712,11 @@ td {
   .chart-controls {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .chart-metric {
+    width: 100%;
+    grid-template-columns: 1fr;
   }
 
   .chart-panel canvas {

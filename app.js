@@ -20,7 +20,8 @@ const mt5TokenTable = "mt5_bridge_tokens";
 const mt5OrderTable = "mt5_detected_orders";
 const mt5HistoryRequestTable = "mt5_history_requests";
 let equityPeriod = "day";
-let equityChartState = { points: [] };
+let equityChartMetric = "r";
+let equityChartState = { points: [], metric: "r" };
 let barChartStates = {};
 let chartTouchHideTimer = null;
 let analyticsResizeTimer = null;
@@ -2639,6 +2640,32 @@ function equitySeriesForPeriod(list, period) {
     });
 }
 
+function balanceSeriesForPeriod(list, period) {
+  const buckets = new Map();
+  [...list]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach((trade) => {
+      const key = periodKey(trade.date, period);
+      if (!key) return;
+      const existing = buckets.get(key) || { key, periodPl: 0, count: 0 };
+      existing.periodPl += tradePl(trade);
+      existing.count += 1;
+      buckets.set(key, existing);
+    });
+
+  let running = Math.max(toNumber(settings.startingBalance, 1000), 0);
+  return [...buckets.values()]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((bucket) => {
+      running += bucket.periodPl;
+      return {
+        ...bucket,
+        label: periodLabel(bucket.key, period),
+        value: running
+      };
+    });
+}
+
 function withCalculatedTrade(trade) {
   const contractSize = defaultContractSize(trade.pair);
   const calc = calculateTradeNumbers({
@@ -3027,6 +3054,8 @@ function filteredTrades() {
   const query = $("#searchInput").value.trim().toLowerCase();
   const outcome = $("#outcomeFilter").value;
   const setup = $("#setupFilter").value;
+  const historyStart = $("#historyStartFilter")?.value || "";
+  const historyEnd = $("#historyEndFilter")?.value || "";
 
   return sortTradesForTable(
     trades.filter((trade) => {
@@ -3046,7 +3075,9 @@ function filteredTrades() {
       const matchesQuery = !query || haystack.includes(query);
       const matchesOutcome = outcome === "all" || getOutcome(trade.resultR) === outcome;
       const matchesSetup = setup === "all" || trade.setup === setup;
-      return matchesQuery && matchesOutcome && matchesSetup;
+      const matchesStart = !historyStart || trade.date >= historyStart;
+      const matchesEnd = !historyEnd || trade.date <= historyEnd;
+      return matchesQuery && matchesOutcome && matchesSetup && matchesStart && matchesEnd;
     })
   );
 }
@@ -3087,10 +3118,20 @@ function renderTable() {
 
 function renderAnalytics(stats, sourceTrades = getAnalyticsTrades()) {
   updateAnalyticsScope(sourceTrades);
-  const equitySeries = equitySeriesForPeriod(sourceTrades, equityPeriod);
+  const equitySeries = equityChartMetric === "balance"
+    ? balanceSeriesForPeriod(sourceTrades, equityPeriod)
+    : equitySeriesForPeriod(sourceTrades, equityPeriod);
   const periodLabelText = equityPeriod.charAt(0).toUpperCase() + equityPeriod.slice(1);
-  $("#expectancyPill").textContent = `${periodLabelText} view, ${formatR(stats.expectancy)} expectancy`;
-  drawEquityChart(equitySeries, equityPeriod);
+  const chartTitle = $("#chart-title");
+  if (chartTitle) chartTitle.textContent = equityChartMetric === "balance" ? "Equity Balance Curve" : "Cumulative R Curve";
+  if (equityChartMetric === "balance") {
+    const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
+    const endingBalance = equitySeries[equitySeries.length - 1]?.value ?? startingBalance;
+    $("#expectancyPill").textContent = `${periodLabelText} view, ${currencyFormatter.format(endingBalance)} balance`;
+  } else {
+    $("#expectancyPill").textContent = `${periodLabelText} view, ${formatR(stats.expectancy)} expectancy`;
+  }
+  drawEquityChart(equitySeries, equityPeriod, equityChartMetric);
   renderInsights(stats, sourceTrades);
   renderLeaderboard("#setupLeaderboard", stats.setupStats, "setup");
   renderLeaderboard("#sessionBreakdown", stats.sessionStats, "session");
@@ -3350,17 +3391,21 @@ function appendChartLabel(layer, text, x, y, className = "") {
   layer.appendChild(label);
 }
 
+function formatEquityChartValue(value, metric = "r") {
+  return metric === "balance" ? currencyFormatter.format(value) : formatR(value);
+}
+
 function renderEquityDomLabels(canvas, points, labels, dimensions) {
   const layer = ensureChartLabelLayer(canvas);
   if (!layer) return;
-  const { width, height, padding, yMax, yMin, compact } = dimensions;
+  const { width, height, padding, yMax, yMin, compact, metric = "r" } = dimensions;
   const scale = chartPixelScales(canvas, width, height);
   const scaledX = (value) => value * scale.x;
   const scaledY = (value) => value * scale.y;
   const xMax = canvas.clientWidth - 20;
 
-  appendChartLabel(layer, formatR(yMax), clamp(scaledX(padding.left), 20, xMax), scaledY(padding.top + 4), "axis");
-  appendChartLabel(layer, formatR(yMin), clamp(scaledX(padding.left), 20, xMax), scaledY(height - padding.bottom + 2), "axis");
+  appendChartLabel(layer, formatEquityChartValue(yMax, metric), clamp(scaledX(padding.left), 20, xMax), scaledY(padding.top + 4), "axis");
+  appendChartLabel(layer, formatEquityChartValue(yMin, metric), clamp(scaledX(padding.left), 20, xMax), scaledY(height - padding.bottom + 2), "axis");
 
   const indexes = compact
     ? [...new Set([0, points.length - 1])]
@@ -3479,11 +3524,11 @@ function installEquityHitZones(canvas, points) {
   }
 }
 
-function drawEquityChart(equity, period = "day") {
+function drawEquityChart(equity, period = "day", metric = "r") {
   const canvas = $("#equityChart");
   const context = canvas.getContext("2d");
   hideEquityTooltip();
-  resetChartReadout("equityChart", "Tap or drag the curve to see period details.");
+  resetChartReadout("equityChart", metric === "balance" ? "Tap or drag the curve to see balance details." : "Tap or drag the curve to see period details.");
   const { width, height, dpr } = getCanvasDisplaySize(canvas, 320);
   canvas.width = width * dpr;
   canvas.height = height * dpr;
@@ -3497,8 +3542,9 @@ function drawEquityChart(equity, period = "day") {
   const padding = compact
     ? { top: 30, right: 16, bottom: 50, left: 36 }
     : { top: 24, right: 24, bottom: 34, left: 46 };
+  const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
   const chartData = [
-    { label: "Start", value: 0, periodR: 0, count: 0, key: "" },
+    { label: "Start", value: metric === "balance" ? startingBalance : 0, periodR: 0, periodPl: 0, count: 0, key: "" },
     ...equity.map((point) => ({
       ...point,
       label: point.label || periodLabel(point.key, period)
@@ -3508,13 +3554,13 @@ function drawEquityChart(equity, period = "day") {
   const labels = chartData.map((point) => point.label);
 
   if (values.length < 2) {
-    equityChartState = { points: [] };
+    equityChartState = { points: [], metric };
     clearChartHitLayer("equityChart");
     clearChartLabelLayer("equityChart");
     hideEquityTooltip();
     context.fillStyle = "#69736f";
     context.font = "14px Segoe UI, sans-serif";
-    context.fillText("No equity curve yet", padding.left, height / 2);
+    context.fillText(metric === "balance" ? "No balance curve yet" : "No equity curve yet", padding.left, height / 2);
     drawChartFrame(context, width, height, padding);
     return;
   }
@@ -3572,8 +3618,8 @@ function drawEquityChart(equity, period = "day") {
     context.fill();
   });
 
-  equityChartState = { points, period, width, height };
-  renderEquityDomLabels(canvas, points, labels, { width, height, padding, yMax, yMin, compact });
+  equityChartState = { points, period, metric, width, height };
+  renderEquityDomLabels(canvas, points, labels, { width, height, padding, yMax, yMin, compact, metric });
   installEquityHitZones(canvas, points);
 }
 
@@ -3881,6 +3927,26 @@ function handleBarChartPointerLeave(event) {
 }
 
 function equitySummary(point) {
+  if (equityChartState.metric === "balance") {
+    const periodPl = toNumber(point.periodPl);
+    const conclusion =
+      point.count === 0
+        ? "Starting balance before recorded trades."
+        : periodPl > 0
+          ? "Balance grew during this period."
+          : periodPl < 0
+            ? "Balance declined during this period."
+            : "Balance stayed flat during this period.";
+    return {
+      conclusion,
+      lines: [
+        `${point.count || 0} trades, ${currencyFormatter.format(periodPl)} this ${equityChartState.period}`,
+        `Balance ${currencyFormatter.format(point.value)}`,
+        conclusion
+      ]
+    };
+  }
+
   const periodR = toNumber(point.periodR);
   const conclusion =
     point.count === 0
@@ -4616,8 +4682,18 @@ function bindEvents() {
       const button = event.target.closest(".segment");
       if (!button) return;
       if (button.dataset.period) return;
+      if (button.dataset.equityMetric) return;
       if (button.dataset.authMode) return;
       setSegment(root.dataset.field, button.dataset.value);
+    });
+  });
+
+  $$(".chart-metric .segment").forEach((button) => {
+    button.addEventListener("click", () => {
+      equityChartMetric = button.dataset.equityMetric === "balance" ? "balance" : "r";
+      $$(".chart-metric .segment").forEach((segment) => segment.classList.remove("active"));
+      button.classList.add("active");
+      rerenderAnalyticsSoon(0);
     });
   });
 
@@ -4739,7 +4815,7 @@ function bindEvents() {
     }
   });
 
-  ["searchInput", "outcomeFilter", "setupFilter"].forEach((id) => {
+  ["searchInput", "historyStartFilter", "historyEndFilter", "outcomeFilter", "setupFilter"].forEach((id) => {
     $(`#${id}`).addEventListener("input", renderTable);
   });
 
