@@ -80,7 +80,7 @@
             <a class="icon-button link-button" href="https://www.tradingview.com/chart/" target="_blank" rel="noopener noreferrer" title="Open TradingView" aria-label="Open TradingView">
               <img class="site-icon" src="https://www.tradingview.com/favicon.ico" alt="" aria-hidden="true">
             </a>
-            <a class="icon-button link-button" href="https://www.metatrader5.com/en/download" target="_blank" rel="noopener noreferrer" title="Open MetaTrader 5" aria-label="Open MetaTrader 5">
+            <a class="icon-button link-button" href="https://www.metatrader5.com/en/download" target="_blank" rel="noopener noreferrer" title="Open MetaTrader 5" aria-label="Open MetaTrader 5" id="openMt5AppLink" data-fallback-url="https://www.metatrader5.com/en/download">
               <img class="site-icon" src="https://www.metatrader5.com/favicon.ico" alt="" aria-hidden="true">
               <span class="sr-only">MT5</span>
             </a>
@@ -220,7 +220,7 @@
       </header>
 
       <section class="view active" id="journalView">
-        <div class="kpi-grid" aria-label="Trading performance summary">
+        <div class="kpi-grid kpi-sticky-band" aria-label="Trading performance summary">
           <article class="kpi-card accent-teal">
             <span>Net R</span>
             <strong id="netR">0.00R</strong>
@@ -498,53 +498,55 @@
               </button>
             </div>
 
-            <div class="filter-bar" role="search">
-              <label>
-                <span>Search</span>
-                <input id="searchInput" placeholder="Pair, setup, tags, notes">
-              </label>
-              <label class="history-date-filter">
-                <span>From</span>
-                <input type="date" id="historyStartFilter">
-              </label>
-              <label class="history-date-filter">
-                <span>To</span>
-                <input type="date" id="historyEndFilter">
-              </label>
-              <label>
-                <span>Outcome</span>
-                <select id="outcomeFilter">
-                  <option value="all">All</option>
-                  <option value="win">Wins</option>
-                  <option value="loss">Losses</option>
-                  <option value="be">Breakeven</option>
-                </select>
-              </label>
-              <label>
-                <span>Setup</span>
-                <select id="setupFilter">
-                  <option value="all">All setups</option>
-                </select>
-              </label>
-            </div>
+            <div class="trade-history-surface">
+              <div class="filter-bar trade-history-filters" role="search">
+                <label>
+                  <span>Search</span>
+                  <input id="searchInput" placeholder="Pair, setup, tags, notes">
+                </label>
+                <label class="history-date-filter">
+                  <span>From</span>
+                  <input type="date" id="historyStartFilter">
+                </label>
+                <label class="history-date-filter">
+                  <span>To</span>
+                  <input type="date" id="historyEndFilter">
+                </label>
+                <label>
+                  <span>Outcome</span>
+                  <select id="outcomeFilter">
+                    <option value="all">All</option>
+                    <option value="win">Wins</option>
+                    <option value="loss">Losses</option>
+                    <option value="be">Breakeven</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Setup</span>
+                  <select id="setupFilter">
+                    <option value="all">All setups</option>
+                  </select>
+                </label>
+              </div>
 
-            <div class="table-wrap trade-history-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th><button class="table-sort active" type="button" data-sort-key="datetime" data-sort-indicator="v">Date / Time</button></th>
-                    <th><button class="table-sort" type="button" data-sort-key="pair">Pair</button></th>
-                    <th><button class="table-sort" type="button" data-sort-key="direction">Dir</button></th>
-                    <th><button class="table-sort" type="button" data-sort-key="setup">Setup</button></th>
-                    <th><button class="table-sort" type="button" data-sort-key="r">R</button></th>
-                    <th><button class="table-sort" type="button" data-sort-key="pl">P/L</button></th>
-                    <th><button class="table-sort" type="button" data-sort-key="discipline">Discipline</button></th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody id="tradeTable"></tbody>
-              </table>
-              <div class="empty-state" id="emptyJournal">No trades recorded.</div>
+              <div class="table-wrap trade-history-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th><button class="table-sort active" type="button" data-sort-key="datetime" data-sort-indicator="v">Date / Time</button></th>
+                      <th><button class="table-sort" type="button" data-sort-key="pair">Pair</button></th>
+                      <th><button class="table-sort" type="button" data-sort-key="direction">Dir</button></th>
+                      <th><button class="table-sort" type="button" data-sort-key="setup">Setup</button></th>
+                      <th><button class="table-sort" type="button" data-sort-key="r">R</button></th>
+                      <th><button class="table-sort" type="button" data-sort-key="pl">P/L</button></th>
+                      <th><button class="table-sort" type="button" data-sort-key="discipline">Discipline</button></th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="tradeTable"></tbody>
+                </table>
+                <div class="empty-state" id="emptyJournal">No trades recorded.</div>
+              </div>
             </div>
           </section>
         </div>

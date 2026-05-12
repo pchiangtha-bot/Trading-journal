@@ -589,6 +589,19 @@ button {
   margin-bottom: 14px;
 }
 
+.kpi-sticky-band {
+  position: sticky;
+  top: 16px;
+  z-index: 14;
+  padding: 10px;
+  margin: -10px -10px 14px;
+  border: 1px solid rgba(219, 224, 217, 0.94);
+  border-radius: calc(var(--radius) + 2px);
+  background: rgba(247, 248, 243, 0.96);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 14px 34px rgba(31, 40, 38, 0.08);
+}
+
 .kpi-card,
 .panel {
   border: 1px solid var(--border);
@@ -964,6 +977,20 @@ input[type="range"] {
   align-items: end;
 }
 
+.trade-history-surface {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.trade-history-filters {
+  margin: 0;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
 .analytics-filter-panel {
   margin-bottom: 14px;
 }
@@ -1068,8 +1095,8 @@ input[type="range"] {
   max-height: calc(var(--trade-history-head) + (var(--trade-history-row) * 14));
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 0;
+  border-radius: 0;
 }
 
 .trade-history-scroll table {
@@ -1668,6 +1695,10 @@ td {
     margin-top: -16px;
   }
 
+  .kpi-sticky-band {
+    top: 12px;
+  }
+
   .nav-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1698,6 +1729,16 @@ td {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .kpi-sticky-band {
+    position: static;
+    padding: 0;
+    margin: 0 0 14px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
   }
 
   .top-actions {

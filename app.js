@@ -4579,6 +4579,43 @@ function showToast(message) {
   showToast.timer = setTimeout(() => toast.classList.remove("visible"), 2400);
 }
 
+function mt5AppLaunchTarget() {
+  const userAgent = navigator.userAgent || "";
+  if (/Android/i.test(userAgent)) return "intent://#Intent;scheme=mt5;package=net.metaquotes.metatrader5;end";
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return "mt5://";
+  return "mt5://";
+}
+
+function openMt5Application(event) {
+  event.preventDefault();
+  const link = event.currentTarget;
+  const fallbackUrl = link?.dataset?.fallbackUrl || "https://www.metatrader5.com/en/download";
+  const launchUrl = mt5AppLaunchTarget();
+  let fallbackTimer = 0;
+  let leftPage = false;
+
+  const clearFallback = () => {
+    leftPage = true;
+    if (fallbackTimer) window.clearTimeout(fallbackTimer);
+    window.removeEventListener("blur", clearFallback);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+  };
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "hidden") clearFallback();
+  };
+
+  window.addEventListener("blur", clearFallback, { once: true });
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  fallbackTimer = window.setTimeout(() => {
+    if (!leftPage) window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+    window.removeEventListener("blur", clearFallback);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, 900);
+
+  window.location.href = launchUrl;
+}
+
 function bindEvents() {
   const switchAccountButton = $("#switchAccountBtn");
   if (switchAccountButton) {
@@ -4627,6 +4664,9 @@ function bindEvents() {
 
   const cloudSignOutButton = $("#cloudSignOutBtn");
   if (cloudSignOutButton) cloudSignOutButton.addEventListener("click", handleCloudSignOut);
+
+  const openMt5AppLink = $("#openMt5AppLink");
+  if (openMt5AppLink) openMt5AppLink.addEventListener("click", openMt5Application);
 
   const generateMt5TokenButton = $("#generateMt5TokenBtn");
   if (generateMt5TokenButton) generateMt5TokenButton.addEventListener("click", () => generateMt5BridgeToken("desktop"));
