@@ -8,6 +8,10 @@
 
 input string WebhookUrl = "https://lzaetartgfejsnwpiezc.supabase.co/functions/v1/mt5-closed-order";
 input string BridgeToken = "";
+input bool   EnableBridgeLeaderElection = true;
+input string BridgeDeviceId = "";
+input string BridgeDeviceLabel = "MT5 desktop";
+input int    BridgeHeartbeatSeconds = 30;
 input bool   SendPartialCloses = false;
 input int    HistoryLookbackDays = 30;
 input int    TimeoutMs = 7000;
@@ -19,18 +23,37 @@ input bool   PollHistoryRequests = true;
 input int    HistoryRequestPollSeconds = 60;
 
 string sentKeys[];
+bool bridgeIsLeader = true;
+datetime lastBridgeHeartbeatAt = 0;
+datetime lastHistoryRequestPollAt = 0;
 
 int OnInit()
   {
-   Print("FX Edge Journal bridge loaded.");
-   Print("Allow this URL in MT5: Tools > Options > Expert Advisors > Allow WebRequest for listed URL: https://lzaetartgfejsnwpiezc.supabase.co");
-   if(BridgeToken == "")
-      Print("BridgeToken is empty. Generate a token inside FX Edge Journal, then paste it into this EA input.");
-   if(PollHistoryRequests)
-      EventSetTimer((int)MathMax(15, HistoryRequestPollSeconds));
-   if(UploadHistoryOnStart)
-      UploadClosedHistoryPeriod(HistoryStartDate, HistoryEndDate, "");
-   return(INIT_SUCCEEDED);
+    Print("FX Edge Journal bridge loaded.");
+    Print("Allow this URL in MT5: Tools > Options > Expert Advisors > Allow WebRequest for listed URL: https://lzaetartgfejsnwpiezc.supabase.co");
+    if(BridgeToken == "")
+       Print("BridgeToken is empty. Generate a token inside FX Edge Journal, then paste it into this EA input.");
+    bridgeIsLeader = !EnableBridgeLeaderElection;
+    int timerSeconds = 0;
+    if(PollHistoryRequests)
+       timerSeconds = (int)MathMax(15, HistoryRequestPollSeconds);
+    if(EnableBridgeLeaderElection)
+      {
+       RefreshBridgeLeadership();
+       int heartbeatTimerSeconds = (int)MathMax(15, BridgeHeartbeatSeconds);
+       if(timerSeconds == 0 || heartbeatTimerSeconds < timerSeconds)
+          timerSeconds = heartbeatTimerSeconds;
+      }
+    if(timerSeconds > 0)
+       EventSetTimer(timerSeconds);
+    if(UploadHistoryOnStart)
+      {
+       if(!EnableBridgeLeaderElection || bridgeIsLeader)
+          UploadClosedHistoryPeriod(HistoryStartDate, HistoryEndDate, "");
+       else
+          Print("FX Edge Journal history upload on start is waiting because another bridge is active.");
+      }
+    return(INIT_SUCCEEDED);
   }
 
 void OnDeinit(const int reason)
@@ -40,8 +63,18 @@ void OnDeinit(const int reason)
 
 void OnTimer()
   {
-   if(PollHistoryRequests)
-      PollHistoryRequest();
+    datetime now = TimeLocal();
+    if(EnableBridgeLeaderElection &&
+       (lastBridgeHeartbeatAt == 0 || now - lastBridgeHeartbeatAt >= (int)MathMax(15, BridgeHeartbeatSeconds)))
+       RefreshBridgeLeadership();
+
+    if(PollHistoryRequests &&
+       (!EnableBridgeLeaderElection || bridgeIsLeader) &&
+       (lastHistoryRequestPollAt == 0 || now - lastHistoryRequestPollAt >= (int)MathMax(15, HistoryRequestPollSeconds)))
+      {
+       lastHistoryRequestPollAt = now;
+       PollHistoryRequest();
+      }
   }
 
 void OnTradeTransaction(const MqlTradeTransaction& trans,
@@ -50,10 +83,12 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
   {
    if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
       return;
-   if(trans.deal == 0)
-      return;
+    if(trans.deal == 0)
+       return;
+    if(EnableBridgeLeaderElection && !RefreshBridgeLeadership())
+       return;
 
-   string payload = "";
+    string payload = "";
    string dedupeKey = "";
    if(!BuildClosedPositionPayload(trans.deal, payload, dedupeKey, "mt5-desktop", ""))
       return;
@@ -177,10 +212,12 @@ bool BuildClosedPositionPayload(ulong exitDeal, string &payload, string &dedupeK
    payload = "{";
    payload += "\"external_id\":\"" + JsonEscape(dedupeKey) + "\",";
    payload += "\"broker_account\":\"" + JsonEscape(IntegerToString(login)) + "\",";
-   payload += "\"broker_server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\",";
-   payload += "\"broker_company\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\",";
-   payload += "\"source\":\"" + JsonEscape(source) + "\",";
-   payload += "\"server_utc_offset_minutes\":" + IntegerToString(serverUtcOffsetMinutes) + ",";
+    payload += "\"broker_server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\",";
+    payload += "\"broker_company\":\"" + JsonEscape(AccountInfoString(ACCOUNT_COMPANY)) + "\",";
+    payload += "\"source\":\"" + JsonEscape(source) + "\",";
+    payload += "\"bridge_device_id\":\"" + JsonEscape(BridgeDeviceIdentifier()) + "\",";
+    payload += "\"bridge_device_label\":\"" + JsonEscape(BridgeDeviceDisplayLabel()) + "\",";
+    payload += "\"server_utc_offset_minutes\":" + IntegerToString(serverUtcOffsetMinutes) + ",";
    payload += "\"symbol\":\"" + JsonEscape(symbol) + "\",";
    payload += "\"direction\":\"" + JsonEscape(direction) + "\",";
    payload += "\"position_id\":\"" + JsonEscape(IntegerToString((long)positionId)) + "\",";
@@ -382,6 +419,65 @@ datetime ParseDateInput(string value, datetime fallback)
    return(parsed > 0 ? parsed : fallback);
   }
 
+string BridgeDeviceIdentifier()
+  {
+   string configured = BridgeDeviceId;
+   StringTrimLeft(configured);
+   StringTrimRight(configured);
+   if(configured != "")
+      return(configured);
+
+   string terminalDataPath = TerminalInfoString(TERMINAL_DATA_PATH);
+   if(terminalDataPath != "")
+      return(terminalDataPath);
+
+   string terminalPath = TerminalInfoString(TERMINAL_PATH);
+   if(terminalPath != "")
+      return(terminalPath);
+
+   return(IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "-" + AccountInfoString(ACCOUNT_SERVER));
+  }
+
+string BridgeDeviceDisplayLabel()
+  {
+   string label = BridgeDeviceLabel;
+   StringTrimLeft(label);
+   StringTrimRight(label);
+   return(label == "" ? "MT5 desktop" : label);
+  }
+
+bool RefreshBridgeLeadership()
+  {
+   if(!EnableBridgeLeaderElection)
+     {
+      bridgeIsLeader = true;
+      return(true);
+     }
+
+   string payload = "{";
+   payload += "\"action\":\"bridge_heartbeat\",";
+   payload += "\"device_id\":\"" + JsonEscape(BridgeDeviceIdentifier()) + "\",";
+   payload += "\"device_label\":\"" + JsonEscape(BridgeDeviceDisplayLabel()) + "\",";
+   payload += "\"broker_account\":\"" + JsonEscape(IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN))) + "\",";
+   payload += "\"broker_server\":\"" + JsonEscape(AccountInfoString(ACCOUNT_SERVER)) + "\"";
+   payload += "}";
+
+   string response = "";
+   lastBridgeHeartbeatAt = TimeLocal();
+   if(!PostJson(payload, response))
+      return(bridgeIsLeader);
+
+   bool nextLeader = ExtractJsonBool(response, "leader", bridgeIsLeader);
+   if(nextLeader != bridgeIsLeader)
+     {
+      Print(nextLeader
+        ? "FX Edge Journal bridge became the active uploader."
+        : "FX Edge Journal bridge is on standby; another terminal is active.");
+     }
+   bridgeIsLeader = nextLeader;
+   return(bridgeIsLeader);
+  }
+
 void PollHistoryRequest()
   {
    string response = "";
@@ -420,6 +516,22 @@ string ExtractJsonString(string json, string key)
    int finish = StringFind(json, "\"", start);
    if(finish < 0) return("");
    return(StringSubstr(json, start, finish - start));
+  }
+
+bool ExtractJsonBool(string json, string key, bool fallback)
+  {
+   string pattern = "\"" + key + "\":";
+   int start = StringFind(json, pattern);
+   if(start < 0)
+      return(fallback);
+   start += StringLen(pattern);
+   string value = StringSubstr(json, start, 5);
+   StringToLower(value);
+   if(StringFind(value, "true") == 0)
+      return(true);
+   if(StringFind(value, "false") == 0)
+      return(false);
+   return(fallback);
   }
 
 bool PostJson(string payload, string &body)

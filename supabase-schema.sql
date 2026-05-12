@@ -74,6 +74,31 @@ to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 
+create table if not exists public.mt5_bridge_leases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  account_key text not null,
+  broker_account text,
+  broker_server text,
+  leader_device_id text not null,
+  leader_label text,
+  last_heartbeat_at timestamptz not null default now(),
+  lease_expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, account_key)
+);
+
+alter table public.mt5_bridge_leases enable row level security;
+
+drop policy if exists "Users can manage own MT5 bridge leases" on public.mt5_bridge_leases;
+create policy "Users can manage own MT5 bridge leases"
+on public.mt5_bridge_leases
+for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
 create table if not exists public.mt5_detected_orders (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,

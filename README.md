@@ -34,6 +34,7 @@ This app includes a safe MT5 bridge for detecting closed positions. It does not 
 7. Add this URL exactly: `https://lzaetartgfejsnwpiezc.supabase.co`
 8. Copy `mt5/FxEdgeClosedOrderBridge.mq5` into your MT5 `MQL5/Experts` folder, compile it in MetaEditor, then attach it to one chart.
 9. Paste the WebhookUrl and BridgeToken into the EA inputs.
+10. Leave `EnableBridgeLeaderElection=true`. If two PCs use the bridge for the same broker account, Supabase keeps one active uploader and the other terminal stays on standby automatically. `BridgeDeviceLabel` is optional and only helps identify a PC in logs.
 
 When a position fully closes, the Journal page will show it in Detected Closed Positions. Click Record to load broker facts into the Trade Ticket, then type your own Session and Setup before saving.
 
@@ -91,6 +92,7 @@ If the Home Screen app still shows an older version after you update the files, 
 - Local account profiles with password-gated sign in, account switching, and separated trades, strategies, custom pairs, and settings per account
 - Supabase email/password cloud sync with local-profile migration and realtime updates across devices. Email Sync now force-saves the current journal and reports timeout errors instead of staying stuck.
 - MT5 desktop closed-position bridge with review-before-record inbox
+- Automatic MT5 bridge leader election so multiple PCs can stay online without both uploading the same live close event
 - MT5 history sync requests from PC or iPhone, executed when an MT5 desktop bridge is online
 - Sortable trade history headers with opening time support keep the journal ordered by real execution timing.
 - MT5 history duplicate guard skips orders already saved in Trade History before they appear as new inbox records.
@@ -145,3 +147,5 @@ MT5 mobile can create the request through the web app, but MT5 mobile cannot rea
 - V1.5.2: MT5 realtime subscription pauses no longer replace the inbox with an error, Display History stays visible while active, and ignored orders are locally hidden from normal realtime refreshes.
 
 - V1.5.3: Fixed the missing app-side firstValue helper that stopped MT5 orders from rendering, and added a guard so MT5 processing errors do not leave the inbox stuck loading.
+
+- V1.5.4: Added automatic MT5 bridge leader election with Supabase heartbeat leases so one PC uploads live tracked closes while another PC waits as standby.

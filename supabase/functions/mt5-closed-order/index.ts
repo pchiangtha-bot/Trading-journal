@@ -5,6 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, x-mt5-token, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 };
+const bridgeLeaseMilliseconds = 90 * 1000;
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -70,6 +71,29 @@ function payloadServerOffsetMinutes(payload: Record<string, unknown>) {
 function textOrNull(value: unknown) {
   const text = String(value ?? "").trim();
   return text || null;
+}
+
+function bridgeDeviceId(payload: Record<string, unknown>) {
+  return textOrNull(firstValue(payload.device_id, payload.bridge_device_id));
+}
+
+function bridgeDeviceLabel(payload: Record<string, unknown>) {
+  return textOrNull(firstValue(payload.device_label, payload.bridge_device_label));
+}
+
+function bridgeAccountInfo(payload: Record<string, unknown>) {
+  const brokerAccount = textOrNull(payload.broker_account) || "unknown-account";
+  const brokerServer = textOrNull(payload.broker_server) || "unknown-server";
+  return {
+    brokerAccount,
+    brokerServer,
+    accountKey: `${brokerAccount}::${brokerServer}`
+  };
+}
+
+function bridgeLeaseExpired(value: unknown, now = new Date()) {
+  const expiresAt = new Date(String(value || ""));
+  return Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= now.getTime();
 }
 
 function cleanDirection(value: unknown) {
@@ -140,6 +164,106 @@ async function journalAlreadyHasMt5Record(supabase: any, userId: string, keys: s
   });
   return { duplicate };
 }
+
+async function readBridgeLease(supabase: any, userId: string, accountKey: string) {
+  return supabase
+    .from("mt5_bridge_leases")
+    .select("id,leader_device_id,leader_label,lease_expires_at")
+    .eq("user_id", userId)
+    .eq("account_key", accountKey)
+    .maybeSingle();
+}
+
+async function refreshBridgeLease(supabase: any, userId: string, payload: Record<string, unknown>) {
+  const deviceId = bridgeDeviceId(payload);
+  if (!deviceId) return { error: "Missing bridge device id." };
+
+  const deviceLabel = bridgeDeviceLabel(payload);
+  const account = bridgeAccountInfo(payload);
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const leaseExpiresAt = new Date(now.getTime() + bridgeLeaseMilliseconds).toISOString();
+
+  let { data: lease, error: leaseError } = await readBridgeLease(supabase, userId, account.accountKey);
+  if (leaseError) return { error: leaseError.message };
+
+  if (!lease) {
+    const { data: inserted, error: insertError } = await supabase
+      .from("mt5_bridge_leases")
+      .insert({
+        user_id: userId,
+        account_key: account.accountKey,
+        broker_account: account.brokerAccount,
+        broker_server: account.brokerServer,
+        leader_device_id: deviceId,
+        leader_label: deviceLabel,
+        last_heartbeat_at: nowIso,
+        lease_expires_at: leaseExpiresAt,
+        updated_at: nowIso
+      })
+      .select("id,leader_device_id,leader_label,lease_expires_at")
+      .maybeSingle();
+
+    if (!insertError && inserted) {
+      return { leader: true, lease: inserted, account };
+    }
+
+    const reread = await readBridgeLease(supabase, userId, account.accountKey);
+    if (reread.error) return { error: reread.error.message };
+    lease = reread.data;
+    if (!lease && insertError) return { error: insertError.message };
+  }
+
+  if (lease && (lease.leader_device_id === deviceId || bridgeLeaseExpired(lease.lease_expires_at, now))) {
+    let update = supabase
+      .from("mt5_bridge_leases")
+      .update({
+        broker_account: account.brokerAccount,
+        broker_server: account.brokerServer,
+        leader_device_id: deviceId,
+        leader_label: deviceLabel,
+        last_heartbeat_at: nowIso,
+        lease_expires_at: leaseExpiresAt,
+        updated_at: nowIso
+      })
+      .eq("id", lease.id)
+      .eq("user_id", userId);
+
+    if (lease.lease_expires_at) {
+      update = update.eq("lease_expires_at", lease.lease_expires_at);
+    }
+
+    const { data: updated, error: updateError } = await update
+      .select("id,leader_device_id,leader_label,lease_expires_at")
+      .maybeSingle();
+
+    if (updateError) return { error: updateError.message };
+    if (updated) return { leader: true, lease: updated, account };
+
+    const reread = await readBridgeLease(supabase, userId, account.accountKey);
+    if (reread.error) return { error: reread.error.message };
+    lease = reread.data;
+  }
+
+  return {
+    leader: Boolean(lease?.leader_device_id === deviceId && !bridgeLeaseExpired(lease?.lease_expires_at, now)),
+    lease,
+    account
+  };
+}
+
+async function bridgePayloadCanUploadLive(supabase: any, userId: string, payload: Record<string, unknown>) {
+  const deviceId = bridgeDeviceId(payload);
+  if (!deviceId) return { leader: true, lease: null };
+
+  const account = bridgeAccountInfo(payload);
+  const { data: lease, error } = await readBridgeLease(supabase, userId, account.accountKey);
+  if (error) return { error: error.message };
+
+  const leader = Boolean(lease && lease.leader_device_id === deviceId && !bridgeLeaseExpired(lease.lease_expires_at));
+  return { leader, lease };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "Use POST." }, 405);
@@ -174,6 +298,24 @@ Deno.serve(async (req) => {
 
   if (tokenError) return jsonResponse({ error: tokenError.message }, 500);
   if (!bridge) return jsonResponse({ error: "MT5 bridge token was not accepted." }, 401);
+
+  if (payload.action === "bridge_heartbeat") {
+    const lease: any = await refreshBridgeLease(supabase, bridge.user_id, payload);
+    if (lease.error) return jsonResponse({ error: lease.error }, 400);
+
+    await supabase
+      .from("mt5_bridge_tokens")
+      .update({ last_used_at: new Date().toISOString() })
+      .eq("id", bridge.id);
+
+    return jsonResponse({
+      ok: true,
+      leader: Boolean(lease.leader),
+      leader_device_id: lease.lease?.leader_device_id || null,
+      leader_label: lease.lease?.leader_label || null,
+      lease_expires_at: lease.lease?.lease_expires_at || null
+    });
+  }
 
   if (payload.action === "poll_history_request") {
     const { data: request, error: requestError } = await supabase
@@ -216,6 +358,20 @@ Deno.serve(async (req) => {
 
     if (updateError) return jsonResponse({ error: updateError.message }, 500);
     return jsonResponse({ ok: true });
+  }
+
+  if (!isHistoryPayload(payload)) {
+    const leaderCheck: any = await bridgePayloadCanUploadLive(supabase, bridge.user_id, payload);
+    if (leaderCheck.error) return jsonResponse({ error: leaderCheck.error }, 500);
+    if (!leaderCheck.leader) {
+      return jsonResponse({
+        ok: true,
+        skipped: true,
+        reason: "not_active_bridge_leader",
+        leader_device_id: leaderCheck.lease?.leader_device_id || null,
+        lease_expires_at: leaderCheck.lease?.lease_expires_at || null
+      });
+    }
   }
 
   const externalId = textOrNull(payload.external_id)
