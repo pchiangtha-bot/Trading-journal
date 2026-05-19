@@ -6,7 +6,8 @@ const storageKeys = {
   accounts: "fx-edge-journal.accounts.v1",
   activeAccount: "fx-edge-journal.active-account.v1",
   legacyMigrated: "fx-edge-journal.legacy-migrated.v1",
-  cloudClientId: "fx-edge-journal.cloud-client-id.v1"
+  cloudClientId: "fx-edge-journal.cloud-client-id.v1",
+  cloudSessionMode: "fx-edge-journal.cloud-session-mode.v1"
 };
 
 const defaultPair = "XAU/USD";
@@ -20,6 +21,7 @@ const mt5TokenTable = "mt5_bridge_tokens";
 const mt5OrderTable = "mt5_detected_orders";
 const mt5HistoryRequestTable = "mt5_history_requests";
 let equityPeriod = "day";
+let periodPlPeriod = "day";
 let equityChartMetric = "r";
 let equityChartState = { points: [], metric: "r" };
 let barChartStates = {};
@@ -28,6 +30,16 @@ let analyticsResizeTimer = null;
 let analyticsRange = "all";
 let analyticsCustomStart = "";
 let analyticsCustomEnd = "";
+let historyRange = "all";
+let historyCustomStart = "";
+let historyCustomEnd = "";
+let setupPlaybookSearch = "";
+let setupPlaybookStatus = "all";
+let setupPlaybookType = "all";
+let strategySearch = "";
+let strategyQuality = "all";
+let strategySetupType = "all";
+let loginReturnView = "journal";
 let marketChartPair = defaultPair;
 let marketChartInterval = "1D";
 const marketChartRanges = ["1D", "5D", "1M", "3M", "12M"];
@@ -81,6 +93,193 @@ const defaultPairGroups = [
     ]
   }
 ];
+
+const customChoiceValue = "__add_custom_choice__";
+const defaultSetups = [
+  "Liquidity sweep",
+  "Break and retest",
+  "Trend pullback",
+  "Range rejection",
+  "News fade",
+  "H1 pullback reaction",
+  "FVG reaction",
+  "Bearish continuation",
+  "Bullish reversal confirmation",
+  "Liquidity sweep reversal",
+  "Liquidity hunt",
+  "London sweep",
+  "New York continuation",
+  "Retest entry",
+  "H1 reversal bar"
+];
+const defaultSetupTypes = [
+  "H1 Pullback Reaction",
+  "Break and Retest",
+  "Bearish Continuation",
+  "Bullish Reversal Confirmation",
+  "Liquidity Sweep Reversal",
+  "FVG Reaction",
+  "Range Rejection",
+  "News Fade",
+  "Custom / Other"
+];
+const setupTypeBySetup = {
+  "Liquidity sweep": "Liquidity Sweep Reversal",
+  "Liquidity sweep reversal": "Liquidity Sweep Reversal",
+  "Liquidity hunt": "Liquidity Sweep Reversal",
+  "London sweep": "Liquidity Sweep Reversal",
+  "Break and retest": "Break and Retest",
+  "Retest entry": "Break and Retest",
+  "Trend pullback": "H1 Pullback Reaction",
+  "H1 pullback reaction": "H1 Pullback Reaction",
+  "FVG reaction": "FVG Reaction",
+  "Bearish continuation": "Bearish Continuation",
+  "Bullish reversal confirmation": "Bullish Reversal Confirmation",
+  "Range rejection": "Range Rejection",
+  "News fade": "News Fade",
+  "H1 reversal bar": "Bullish Reversal Confirmation"
+};
+const setupTypeBlueprints = {
+  "H1 Pullback Reaction": {
+    description: "Reaction from a major H1 area such as fib, FVG, support/resistance, or liquidity.",
+    valid: ["H1 context is clear", "Price reaches a logical retracement zone", "M15 supports the reaction"],
+    invalid: ["Entry before price reaches the zone", "M5 bounce only", "SL is not beyond invalidation"],
+    tags: ["H1 Pullback", "Fib Reaction", "FVG Reaction", "Rejection Entry"]
+  },
+  "Break and Retest": {
+    description: "Continuation after price breaks meaningful structure, retests, then holds.",
+    valid: ["Meaningful level breaks", "M15 closes beyond the level", "Retest holds with rejection"],
+    invalid: ["No candle-close confirmation", "FOMO entry after an extended break", "Retest fails"],
+    tags: ["Break Retest", "Structure Break", "Continuation"]
+  },
+  "Bearish Continuation": {
+    description: "Sell setup from bearish structure, lower high rejection, then continuation lower.",
+    valid: ["Bearish H1/M15 structure exists", "Lower high rejects", "Meaningful swing low breaks"],
+    invalid: ["No swing low break", "Sell only because price feels heavy", "Instant reversal from failed buy"],
+    tags: ["Bearish Continuation", "Lower High", "Swing Low Break", "Sell-Side Liquidity"]
+  },
+  "Bullish Reversal Confirmation": {
+    description: "Buy setup after bearish pressure weakens and bullish structure confirms.",
+    valid: ["Break above previous lower high", "M15 closes above structure", "Higher low or retest holds"],
+    invalid: ["Bounce only", "M5 divergence only", "No break above previous lower high"],
+    tags: ["Bullish Reversal", "Break of Lower High", "Higher Low", "Reversal Confirmation"]
+  },
+  "Liquidity Sweep Reversal": {
+    description: "Price sweeps a meaningful high/low, rejects, then reclaims structure.",
+    valid: ["Prior high/low is swept", "Rejection or displacement appears", "M15 reclaim confirms"],
+    invalid: ["Sweep assumed before rejection", "No reclaim confirmation", "Late entry creates poor R:R"],
+    tags: ["Liquidity Sweep", "Stop Hunt", "Reclaim", "Reversal Attempt"]
+  },
+  "FVG Reaction": {
+    description: "Reaction from a fair value gap aligned with H1/M15 structure.",
+    valid: ["FVG is visible on H1/M15", "FVG overlaps with structure or liquidity", "Rejection or displacement appears"],
+    invalid: ["FVG is unclear", "Against stronger structure without confirmation", "Entry only because price touched the FVG"],
+    tags: ["FVG Reaction", "Imbalance", "H1 FVG", "M15 FVG"]
+  },
+  "Range Rejection": {
+    description: "Trade from a clear range edge after rejection confirms.",
+    valid: ["Range boundaries are visible", "Entry is near an edge", "Target is toward the opposite side or liquidity"],
+    invalid: ["Entry in the middle of the range", "No rejection", "News volatility breaks the range"],
+    tags: ["Range Edge", "Rejection", "Mean Reversion"]
+  },
+  "News Fade": {
+    description: "Post-news reaction only after volatility settles and structure confirms.",
+    valid: ["News spike is over", "Reclaim or rejection confirms", "Risk is reduced for volatility"],
+    invalid: ["Entry during the spike", "No confirmation", "Spread or slippage risk is too high"],
+    tags: ["News Fade", "Volatility Reclaim", "Post-News Reaction"]
+  },
+  "Custom / Other": {
+    description: "Custom setup that needs its own written conditions before it becomes a playbook.",
+    valid: ["Define the exact trigger", "Define invalidation", "Define risk and review rule"],
+    invalid: ["No written trigger", "Unclear SL/TP", "Emotion-led entry"],
+    tags: ["Custom Setup"]
+  }
+};
+const defaultPositiveTags = [
+  "None",
+  "Patient Hold",
+  "Good Risk Control",
+  "H1 Structure Respected",
+  "M15 Confirmation",
+  "Clean Setup",
+  "Waited for Retest",
+  "No Emotional Reversal",
+  "Accepted SL",
+  "Protected Profit",
+  "Stopped After Plan"
+];
+const defaultMistakeTags = [
+  "None",
+  "Revenge Trade",
+  "FOMO",
+  "Overtrade",
+  "Instant Reversal",
+  "Early Exit",
+  "Moved SL Emotionally",
+  "M5 Noise Reaction",
+  "No Clear Setup",
+  "Chasing Entry",
+  "No M15 Confirmation",
+  "Ignored H1 Structure",
+  "Continued After 2 Losses",
+  "Continued After Good Profit",
+  "Poor R:R",
+  "Late Entry",
+  "FOMO entry",
+  "Moved stop",
+  "Oversized risk",
+  "Skipped plan",
+  "News surprise"
+];
+const scoreDriverGroups = {
+  setup: [
+    { name: "scoreSetupH1", points: 20 },
+    { name: "scoreSetupM15", points: 20 },
+    { name: "scoreSetupZone", points: 20 },
+    { name: "scoreSetupSl", points: 15 },
+    { name: "scoreSetupTp", points: 15 },
+    { name: "scoreSetupNoChase", points: 10 }
+  ],
+  confidence: [
+    { name: "scoreConfidenceExplain", points: 20 },
+    { name: "scoreConfidenceInvalidation", points: 20 },
+    { name: "scoreConfidenceSlTp", points: 20 },
+    { name: "scoreConfidenceEmotion", points: 20 },
+    { name: "scoreConfidenceLimits", points: 20 }
+  ],
+  discipline: [
+    { name: "scoreDisciplinePlan", points: 15 },
+    { name: "scoreDisciplineRisk", points: 15 },
+    { name: "scoreDisciplineSl", points: 15 },
+    { name: "scoreDisciplineExit", points: 10 },
+    { name: "scoreDisciplineNoEarlyExit", points: 10 },
+    { name: "scoreDisciplineNoNoise", points: 10 },
+    { name: "scoreDisciplineNoReverse", points: 15 },
+    { name: "scoreDisciplineDailyLimit", points: 10 }
+  ]
+};
+const scoreDriverNames = Object.values(scoreDriverGroups).flat().map((driver) => driver.name);
+const disciplineCapsByMistake = {
+  "No SL": 30,
+  "Instant Reversal": 40,
+  "Revenge Trade": 30,
+  "Overtrade": 50,
+  "Continued After 2 Losses": 40,
+  "Continued After Good Profit": 50,
+  "Moved SL Emotionally": 50,
+  "Moved stop": 50,
+  "M5 Noise Reaction": 50,
+  "No Clear Setup": 40,
+  "Ignored H1 Structure": 40,
+  "No M15 Confirmation": 50,
+  "Poor R:R": 60,
+  "Early Exit": 70,
+  "FOMO": 60,
+  "FOMO entry": 60,
+  "Chasing Entry": 55,
+  "Skipped plan": 45,
+  "Oversized risk": 55
+};
 
 const demoTrades = [
   {
@@ -239,7 +438,17 @@ const demoTrades = [
 
 const defaultSettings = {
   startingBalance: 1000,
-  commissionPerLot: 7
+  commissionPerLot: 7,
+  themeMode: "system",
+  periodPlPeriod: "day",
+  historyRange: "all",
+  historyCustomStart: "",
+  historyCustomEnd: "",
+  customSetups: [],
+  customPositiveTags: [],
+  customMistakeTags: [],
+  checklistState: { date: "", checks: {} },
+  dailyReviews: []
 };
 
 let accounts = loadFromStorage(storageKeys.accounts, []);
@@ -273,6 +482,30 @@ let cloudSyncState = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const systemThemeMedia = typeof window !== "undefined" && window.matchMedia
+  ? window.matchMedia("(prefers-color-scheme: dark)")
+  : null;
+
+function resolvedThemeMode(mode = settings.themeMode) {
+  if (mode === "dark" || mode === "light") return mode;
+  return systemThemeMedia?.matches ? "dark" : "light";
+}
+
+function applyThemePreference() {
+  const mode = ["light", "dark", "system"].includes(settings.themeMode) ? settings.themeMode : "system";
+  const resolved = resolvedThemeMode(mode);
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.dataset.themeChoice = mode;
+  document.documentElement.style.colorScheme = resolved;
+  const meta = $("#themeColorMeta");
+  if (meta) meta.setAttribute("content", resolved === "dark" ? "#071513" : "#0f766e");
+}
+
+function updateThemeControl() {
+  const select = $("#themeSelect");
+  if (!select) return;
+  select.value = ["light", "dark", "system"].includes(settings.themeMode) ? settings.themeMode : "system";
+}
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -307,6 +540,14 @@ function saveAccounts() {
   localStorage.setItem(storageKeys.accounts, JSON.stringify(accounts));
 }
 
+function normalizeSettingsLists() {
+  settings.customSetups = Array.isArray(settings.customSetups) ? [...settings.customSetups] : [];
+  settings.customPositiveTags = Array.isArray(settings.customPositiveTags) ? [...settings.customPositiveTags] : [];
+  settings.customMistakeTags = Array.isArray(settings.customMistakeTags) ? [...settings.customMistakeTags] : [];
+  settings.checklistState = normalizeChecklistState(settings.checklistState);
+  settings.dailyReviews = normalizeDailyReviews(settings.dailyReviews);
+}
+
 function loadAccountData() {
   const storedCustomPairs = loadFromStorage(accountScopedKey(storageKeys.customPairs), []);
   customPairs = Array.isArray(storedCustomPairs)
@@ -322,12 +563,18 @@ function loadAccountData() {
     ...defaultSettings,
     ...loadFromStorage(accountScopedKey(storageKeys.settings), {})
   };
+  normalizeSettingsLists();
   analyticsRange = settings.analyticsRange || "all";
   analyticsCustomStart = settings.analyticsCustomStart || "";
   analyticsCustomEnd = settings.analyticsCustomEnd || "";
+  periodPlPeriod = ["day", "month", "year"].includes(settings.periodPlPeriod) ? settings.periodPlPeriod : "day";
+  historyRange = settings.historyRange || "all";
+  historyCustomStart = settings.historyCustomStart || "";
+  historyCustomEnd = settings.historyCustomEnd || "";
   marketChartPair = settings.marketChartPair || defaultPair;
   marketChartInterval = settings.marketChartInterval || "1D";
   if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
+  applyThemePreference();
 
   const storedTrades = loadFromStorage(accountScopedKey(storageKeys.trades), []);
   if (Array.isArray(storedTrades)) {
@@ -341,13 +588,19 @@ function loadAccountData() {
 function resetAppData() {
   customPairs = [];
   settings = { ...defaultSettings };
+  normalizeSettingsLists();
   trades = [];
   strategies = [];
   analyticsRange = "all";
   analyticsCustomStart = "";
   analyticsCustomEnd = "";
+  periodPlPeriod = "day";
+  historyRange = "all";
+  historyCustomStart = "";
+  historyCustomEnd = "";
   marketChartPair = defaultPair;
   marketChartInterval = "1D";
+  applyThemePreference();
 }
 
 function hasLegacyData() {
@@ -464,6 +717,31 @@ function isCloudAccount(account) {
   return Boolean(account?.cloudUserId);
 }
 
+function cloudUserMetadata(user = cloudUser) {
+  return {
+    ...(user?.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {}),
+    ...(user?.identities?.[0]?.identity_data && typeof user.identities[0].identity_data === "object" ? user.identities[0].identity_data : {})
+  };
+}
+
+function cloudUserAvatar(user = cloudUser) {
+  const meta = cloudUserMetadata(user);
+  return String(meta.avatar_url || meta.picture || "").trim();
+}
+
+function cloudUserDisplayName(user = cloudUser) {
+  const meta = cloudUserMetadata(user);
+  const email = String(user?.email || "").trim();
+  return String(meta.full_name || meta.name || meta.preferred_username || (email.includes("@") ? email.split("@")[0] : "") || "Cloud profile").trim();
+}
+
+function cloudUserProvider(user = cloudUser) {
+  const provider = String(user?.app_metadata?.provider || user?.identities?.[0]?.provider || "").trim().toLowerCase();
+  if (provider === "google") return "Google";
+  if (provider === "email") return "Email";
+  return provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : "Cloud";
+}
+
 function accountById(id) {
   return accounts.find((account) => account.id === id);
 }
@@ -497,41 +775,380 @@ function safeSessionRemove(key) {
   }
 }
 
+function safeLocalGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    return null;
+  }
+}
+
+function safeLocalSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    safeSessionSet(key, value);
+  }
+}
+
+function safeLocalRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    // Ignore blocked localStorage.
+  }
+}
+
+function cloudProjectRef() {
+  try {
+    return new URL(supabaseConfig.url).hostname.split(".")[0] || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function clearStoredCloudSession() {
+  const projectRef = cloudProjectRef();
+  const exactKeys = new Set(["supabase.auth.token"]);
+  if (projectRef) {
+    exactKeys.add(`sb-${projectRef}-auth-token`);
+    exactKeys.add(`sb-${projectRef}-code-verifier`);
+  }
+
+  const clearStorage = (storage) => {
+    if (!storage) return;
+    try {
+      const keys = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (!key) continue;
+        const isProjectKey = projectRef && key.startsWith(`sb-${projectRef}-`);
+        const isAuthKey = key.startsWith("sb-") && (key.endsWith("-auth-token") || key.endsWith("-code-verifier"));
+        if (exactKeys.has(key) || isProjectKey || (!projectRef && isAuthKey)) keys.push(key);
+      }
+      keys.forEach((key) => storage.removeItem(key));
+    } catch (error) {
+      exactKeys.forEach((key) => {
+        try {
+          storage.removeItem(key);
+        } catch (removeError) {
+          // Ignore blocked storage.
+        }
+      });
+    }
+  };
+
+  clearStorage(localStorage);
+  clearStorage(sessionStorage);
+}
+
+function activeAccountStoredId() {
+  return safeSessionGet(storageKeys.activeAccount) || safeLocalGet(storageKeys.activeAccount);
+}
+
+function setActiveAccountStorage(accountId, keepSignedIn = true) {
+  safeSessionRemove(storageKeys.activeAccount);
+  safeLocalRemove(storageKeys.activeAccount);
+  if (keepSignedIn) safeLocalSet(storageKeys.activeAccount, accountId);
+  else safeSessionSet(storageKeys.activeAccount, accountId);
+}
+
+function clearActiveAccountStorage() {
+  safeSessionRemove(storageKeys.activeAccount);
+  safeLocalRemove(storageKeys.activeAccount);
+}
+
+function cloudSessionMode() {
+  return safeLocalGet(storageKeys.cloudSessionMode) === "session" ? "session" : "local";
+}
+
+function setCloudSessionPersistenceMode(keepSignedIn = true) {
+  safeLocalSet(storageKeys.cloudSessionMode, keepSignedIn ? "local" : "session");
+}
+
+function cloudSessionShouldPersist() {
+  return cloudSessionMode() !== "session";
+}
+
+function createCloudAuthStorage() {
+  return {
+    getItem(key) {
+      if (cloudSessionMode() === "session") return safeSessionGet(key);
+      return safeLocalGet(key) || safeSessionGet(key);
+    },
+    setItem(key, value) {
+      if (cloudSessionMode() === "session") {
+        safeLocalRemove(key);
+        safeSessionSet(key, value);
+        return;
+      }
+      safeSessionRemove(key);
+      safeLocalSet(key, value);
+    },
+    removeItem(key) {
+      safeSessionRemove(key);
+      safeLocalRemove(key);
+    }
+  };
+}
+
+function syncKeepSignedInControls() {
+  $$('input[name="keepSignedIn"]').forEach((keep) => {
+    if (!keep.dataset.touched) keep.checked = true;
+  });
+}
+
+function keepSignedInFromTrigger(trigger) {
+  const scope = trigger?.closest?.(".login-card, .auth-card, form") || document;
+  const keepControl = scope.querySelector?.('input[name="keepSignedIn"]')
+    || $("#cloudKeepSignedIn")
+    || $("#overlayCloudKeepSignedIn");
+  return !keepControl || keepControl.checked !== false;
+}
+
+function accountInitials(name = "") {
+  const initials = String(name || "FX")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+  return (initials || "FX").slice(0, 2);
+}
+
+function paintAccountAvatar(element, name, avatarUrl = "") {
+  if (!element) return;
+  const url = String(avatarUrl || "").trim();
+  element.textContent = url ? "" : accountInitials(name);
+  element.style.backgroundImage = url ? `url("${url.replace(/"/g, "%22")}")` : "";
+  element.classList.toggle("has-image", Boolean(url));
+}
+
+function activeProfileAvatarUrl() {
+  return activeAccount?.avatarUrl || (isActiveCloudProfile() ? cloudUserAvatar() : "");
+}
+
+function profileDeviceLabel() {
+  const id = ensureCloudClientId();
+  const shortId = String(id || "").split("-").filter(Boolean).pop()?.slice(0, 8) || "local";
+  return `This browser · ${shortId}`;
+}
+
+function isProfileManagementOpen() {
+  return !$("#profileManagementModal")?.classList.contains("hidden");
+}
+
+function syncProfileManagementUi() {
+  const modal = $("#profileManagementModal");
+  if (!modal) return;
+  const signedInCloud = Boolean(cloudUser);
+  const activeCloudAccount = isCloudAccount(activeAccount);
+  const activeCloud = isActiveCloudProfile();
+  const signedInDifferentCloud = signedInCloud && activeCloudAccount && activeAccount.cloudUserId !== cloudUser.id;
+  const profileName = activeAccount?.name || "Locked";
+  const providerText = !activeAccount
+    ? "No provider"
+    : activeCloudAccount
+      ? `${activeAccount.cloudProvider || cloudUserProvider()} cloud profile`
+      : "Offline local profile";
+  const emailText = activeAccount?.cloudEmail || cloudUser?.email || (activeAccount ? "Local profile" : "Not signed in");
+  const syncText = activeCloud
+    ? cloudSyncState.label
+    : signedInDifferentCloud
+      ? "Different cloud signed in"
+      : activeCloudAccount
+        ? "Reconnect cloud"
+        : signedInCloud
+          ? "Cloud signed in"
+          : activeAccount
+            ? "Local only"
+            : "Locked";
+
+  paintAccountAvatar($("#profileAvatarPreview"), profileName, activeProfileAvatarUrl());
+  const name = $("#profileManageName");
+  if (name) name.textContent = profileName;
+  const meta = $("#profileManageMeta");
+  if (meta) {
+    meta.textContent = activeAccount
+      ? `${providerText} · ${syncText}`
+      : "Sign in to manage your profile.";
+  }
+  const input = $("#profileDisplayNameInput");
+  if (input && document.activeElement !== input) input.value = activeAccount?.name || "";
+  if (input) input.disabled = !activeAccount;
+  const email = $("#profileEmailValue");
+  if (email) email.textContent = emailText;
+  const provider = $("#profileProviderValue");
+  if (provider) provider.textContent = providerText;
+  const sync = $("#profileSyncValue");
+  if (sync) sync.textContent = syncText;
+  const device = $("#profileDeviceValue");
+  if (device) device.textContent = profileDeviceLabel();
+
+  const saveButton = $("#profileNameForm button[type='submit']");
+  if (saveButton) saveButton.disabled = !activeAccount;
+  const syncButton = $("#profileSyncNowBtn");
+  if (syncButton) syncButton.disabled = !activeCloud || !supabaseClient || !cloudUser;
+  const openCloudButton = $("#profileOpenCloudBtn");
+  if (openCloudButton) {
+    const label = activeCloud
+      ? "Cloud Profile Active"
+      : signedInCloud
+        ? "Use Cloud Profile"
+        : "Sign in to Sync";
+    openCloudButton.disabled = activeCloud || (!activeAccount && !signedInCloud);
+    openCloudButton.innerHTML = `${iconMarkup("cloud")} ${label}`;
+  }
+  const cloudHelp = $("#profileCloudHelp");
+  if (cloudHelp) {
+    cloudHelp.textContent = activeCloud
+      ? "Cloud Profile Active means this app is already using the synced journal for your signed-in account."
+      : signedInDifferentCloud
+        ? "A different cloud account is signed in. Use Cloud Profile to switch this device to that synced journal."
+        : activeCloudAccount && !signedInCloud
+          ? "This is a cloud profile, but the cloud session is not active. Sign in again to resume sync."
+          : signedInCloud
+            ? "Use Cloud Profile loads the synced journal for your signed-in account. Transfer To Cloud uploads the current local profile."
+            : "Sign in to Sync connects this profile to your cloud journal.";
+  }
+  const migrateButton = $("#profileMigrateBtn");
+  if (migrateButton) migrateButton.disabled = !signedInCloud || !activeAccount || activeCloud || activeCloudAccount;
+  const exportJsonButton = $("#profileExportJsonBtn");
+  if (exportJsonButton) exportJsonButton.disabled = !activeAccount;
+  const importJsonButton = $("#profileImportJsonBtn");
+  if (importJsonButton) importJsonButton.disabled = !activeAccount;
+  const exportCsvButton = $("#profileExportCsvBtn");
+  if (exportCsvButton) exportCsvButton.disabled = !activeAccount || !trades.length;
+  const signOutButton = $("#profileSignOutBtn");
+  if (signOutButton) signOutButton.disabled = !activeAccount && !signedInCloud;
+}
+
 function syncAccountUi() {
   const name = $("#activeAccountName");
   if (name) name.textContent = activeAccount ? activeAccount.name : "Locked";
+  const provider = $("#activeAccountProvider");
+  if (provider) {
+    provider.textContent = !activeAccount
+      ? "No profile open"
+      : isCloudAccount(activeAccount)
+        ? isActiveCloudProfile()
+          ? `${activeAccount.cloudProvider || cloudUserProvider()} cloud`
+          : "Cloud profile"
+        : "Local profile";
+  }
+  const avatar = $("#accountAvatar");
+  paintAccountAvatar(avatar, activeAccount?.name || "FX", activeProfileAvatarUrl());
+  const manage = $("#manageProfileBtn");
+  if (manage) manage.disabled = !activeAccount;
   const logout = $("#logoutAccountBtn");
   if (logout) logout.disabled = !activeAccount;
+  syncLoginCloseControl();
   syncCloudUi();
+  syncProfileManagementUi();
 }
 
 function populateAccountSelect() {
-  const select = $("#loginAccountSelect");
-  if (!select) return;
-  select.innerHTML = "";
+  const selects = ["loginAccountSelect", "pageLoginAccountSelect"].map((id) => $(`#${id}`)).filter(Boolean);
+  if (!selects.length) return;
   const localAccounts = accounts.filter(canLocalSignIn);
 
+  selects.forEach((select) => {
+    select.innerHTML = "";
+    if (!localAccounts.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Create a local profile first";
+      select.appendChild(option);
+      select.disabled = true;
+      return;
+    }
+
+    select.disabled = false;
+    localAccounts.forEach((account) => {
+      const option = document.createElement("option");
+      option.value = account.id;
+      option.textContent = account.name;
+      select.appendChild(option);
+    });
+
+    const selectedId = canLocalSignIn(activeAccount)
+      ? activeAccount.id
+      : activeAccountStoredId() || localAccounts[0].id;
+    select.value = localAccounts.some((account) => account.id === selectedId) ? selectedId : localAccounts[0].id;
+  });
+}
+
+function setLoginViewActive(mode = "cloud") {
+  $$(".nav-tab").forEach((tab) => tab.classList.remove("active"));
+  $$(".view").forEach((view) => view.classList.remove("active"));
+  $("#loginView")?.classList.add("active");
+  const title = $("#viewTitle");
+  if (title) title.textContent = "Login";
+  setAuthMode(mode);
+  populateAccountSelect();
+  syncKeepSignedInControls();
+  $("#cloudCreatePanel")?.classList.add("hidden");
+  $("#pageCreateAccountForm")?.classList.add("hidden");
+}
+
+function currentWorkspaceView() {
+  const activeView = document.querySelector(".view.active:not(#loginView)");
+  return activeView?.id ? activeView.id.replace(/View$/, "") : loginReturnView || "journal";
+}
+
+function syncLoginCloseControl() {
+  const closeButton = $("#closeLoginPageBtn");
+  if (!closeButton) return;
+  const canClose = Boolean(activeAccount && document.body.dataset.authRequired !== "true");
+  closeButton.classList.toggle("hidden", !canClose);
+  closeButton.disabled = !canClose;
+}
+
+function showLoginPage(mode = "cloud", locked = !activeAccount) {
+  const currentView = currentWorkspaceView();
+  if (currentView !== "login") loginReturnView = currentView;
+  setLoginViewActive(mode);
+  document.body.dataset.authPage = "true";
+  document.body.dataset.authRequired = locked ? "true" : "false";
+  syncLoginCloseControl();
+}
+
+function showMainView(view = "journal") {
+  const button = document.querySelector(`[data-view="${view}"]`) || document.querySelector('[data-view="journal"]');
+  if (button) button.click();
+  else {
+    $$(".view").forEach((item) => item.classList.remove("active"));
+    $("#journalView")?.classList.add("active");
+    const title = $("#viewTitle");
+    if (title) title.textContent = "Journal";
+  }
+  document.body.dataset.authPage = "false";
+  document.body.dataset.authRequired = "false";
+  syncLoginCloseControl();
+}
+
+function closeLoginPage() {
+  if (!activeAccount) {
+    showLoginPage("cloud", true);
+    return;
+  }
+  showMainView(loginReturnView || "journal");
+}
+
+function ensureLoginPageLocalState() {
+  const select = $("#pageLoginAccountSelect");
+  if (!select) return;
+  const localAccounts = accounts.filter(canLocalSignIn);
   if (!localAccounts.length) {
     const option = document.createElement("option");
     option.value = "";
     option.textContent = "Create a local profile first";
+    select.innerHTML = "";
     select.appendChild(option);
     select.disabled = true;
-    return;
   }
-
-  select.disabled = false;
-  localAccounts.forEach((account) => {
-    const option = document.createElement("option");
-    option.value = account.id;
-    option.textContent = account.name;
-    select.appendChild(option);
-  });
-
-  const selectedId = canLocalSignIn(activeAccount)
-    ? activeAccount.id
-    : safeSessionGet(storageKeys.activeAccount) || localAccounts[0].id;
-  select.value = localAccounts.some((account) => account.id === selectedId) ? selectedId : localAccounts[0].id;
 }
 
 function setAuthMode(mode = "login") {
@@ -550,38 +1167,57 @@ function setAuthMode(mode = "login") {
   const eyebrow = $("#authEyebrow");
   if (title) {
     title.textContent = resolved === "cloud"
-      ? "Cloud Sync"
+      ? "FX Edge Account"
       : resolved === "create"
         ? "Create Account"
         : "Open Account";
   }
-  if (eyebrow) eyebrow.textContent = resolved === "cloud" ? "Supabase account" : "Local profiles";
+  if (eyebrow) eyebrow.textContent = resolved === "cloud" ? "Synced account" : "Local profiles";
 }
 
 function showAuthOverlay(mode = "login", locked = !activeAccount) {
-  const overlay = $("#authOverlay");
-  if (!overlay) return;
-  populateAccountSelect();
-  setAuthMode(mode);
-  overlay.dataset.locked = locked ? "true" : "false";
-  overlay.classList.remove("hidden");
-  const close = $("#closeAuthBtn");
-  if (close) close.hidden = locked;
-
-  setTimeout(() => {
-    const target = overlay.querySelector(".auth-form:not(.hidden) input, .auth-form:not(.hidden) select");
-    if (target) target.focus();
-  }, 0);
-}
-
-function hideAuthOverlay() {
-  if (!activeAccount) return;
+  showLoginPage(mode, locked);
   const overlay = $("#authOverlay");
   if (overlay) overlay.classList.add("hidden");
 }
 
+function hideAuthOverlay() {
+  const overlay = $("#authOverlay");
+  if (overlay) overlay.classList.add("hidden");
+  if (!activeAccount) {
+    showLoginPage("cloud", true);
+    return;
+  }
+}
+
+function openTradeTicketModal() {
+  const modal = $("#tradeTicketModal");
+  if (!modal) return;
+  if (modal.parentElement !== document.body) document.body.appendChild(modal);
+  modal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+  setTimeout(() => {
+    const firstField = modal.querySelector("#tradeForm input:not([type='hidden']), #tradeForm select, #tradeForm textarea");
+    if (firstField) firstField.focus();
+  }, 0);
+}
+
+function closeTradeTicketModal() {
+  const modal = $("#tradeTicketModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
+function openNewTradeTicket() {
+  resetTradeForm();
+  openTradeTicketModal();
+}
+
 function refreshAccountWorkspace() {
   renderPairOptions(defaultPair);
+  renderTradeChoiceOptions();
+  renderStrategySetupTypeOptions("Custom / Other");
   renderMarketChartOptions(marketChartPair);
   syncMarketChartControls();
   resetTradeForm();
@@ -591,26 +1227,27 @@ function refreshAccountWorkspace() {
   syncAccountUi();
 }
 
-function setActiveAccount(account, message = "") {
+function setActiveAccount(account, message = "", options = {}) {
   activeAccount = account;
-  safeSessionSet(storageKeys.activeAccount, account.id);
+  setActiveAccountStorage(account.id, options.keepSignedIn !== false);
   loadAccountData();
   refreshAccountWorkspace();
   hideAuthOverlay();
+  showMainView("journal");
   if (message) showToast(message);
 }
 
 function lockAccount(showMessage = true) {
   activeAccount = null;
-  safeSessionRemove(storageKeys.activeAccount);
+  clearActiveAccountStorage();
   resetAppData();
   refreshAccountWorkspace();
-  showAuthOverlay(accounts.some(canLocalSignIn) ? "login" : "cloud", true);
+  showAuthOverlay("cloud", true);
   if (showMessage) showToast("Account locked.");
 }
 
 function initAccountSession() {
-  const account = accountById(safeSessionGet(storageKeys.activeAccount));
+  const account = accountById(activeAccountStoredId());
   if (account) {
     activeAccount = account;
     loadAccountData();
@@ -660,7 +1297,8 @@ async function handleCreateAccount(event) {
   saveAccounts();
   if (wasFirstAccount && hasLegacyData()) migrateLegacyDataToAccount(account.id);
   form.reset();
-  setActiveAccount(account, `Account ${name} is ready.`);
+  const keepSignedIn = form.id === "pageCreateAccountForm" ? $("#keepSignedIn")?.checked !== false : true;
+  setActiveAccount(account, `Account ${name} is ready.`, { keepSignedIn });
 }
 
 async function handleLogin(event) {
@@ -682,7 +1320,8 @@ async function handleLogin(event) {
   }
 
   form.reset();
-  setActiveAccount(account, `Signed in as ${account.name}.`);
+  const keepSignedIn = form.id === "pageLoginForm" ? $("#keepSignedIn")?.checked !== false : true;
+  setActiveAccount(account, `Signed in as ${account.name}.`, { keepSignedIn });
 }
 
 function ensureCloudClientId() {
@@ -714,6 +1353,14 @@ function friendlyCloudError(error) {
   if (lower.includes("invalid login credentials")) return "Email or password is not correct.";
   if (lower.includes("fetch")) return "Supabase is unreachable. Check internet and the project URL.";
   return message;
+}
+
+function cloudRedirectUrl() {
+  if (window.location.protocol === "file:") return "";
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 async function sha256Hex(value) {
@@ -795,8 +1442,8 @@ function withCloudTimeout(task, message = "Cloud request timed out. Check Supaba
   return Promise.race([Promise.resolve(task), timeout]).finally(() => clearTimeout(timerId));
 }
 
-function setMt5InboxState(kind = "idle", message = "") {
-  mt5InboxState = { kind, message };
+function setMt5InboxState(kind = "idle", message = "", extra = {}) {
+  mt5InboxState = { kind, message, ...extra };
   renderMt5Inbox();
 }
 
@@ -807,35 +1454,53 @@ function setCloudStatus(label, detail = "", tone = "muted") {
 
 function syncCloudUi() {
   const status = $("#cloudSyncStatus");
+  const signedIn = Boolean(cloudUser);
+  const activeCloudAccount = isCloudAccount(activeAccount);
+  const hasCloudIdentity = signedIn || activeCloudAccount;
+  const needsReconnect = activeCloudAccount && !signedIn;
+  const effectiveStatus = needsReconnect
+    ? { label: "Reconnect", tone: "pending" }
+    : cloudSyncState;
   if (status) {
-    status.textContent = cloudSyncState.label;
-    status.className = `sync-badge ${cloudSyncState.tone || "muted"}`;
+    status.textContent = effectiveStatus.label;
+    status.className = `sync-badge ${effectiveStatus.tone || "muted"}`;
   }
 
   const note = $("#cloudNote");
-  if (note) note.textContent = cloudSyncState.detail || "Use email/password to sync this journal between iPhone and PC.";
+  if (note) note.textContent = needsReconnect
+    ? "Sign in again to reconnect this cloud profile."
+    : cloudSyncState.detail || "Use email/password or Google to sync this journal between iPhone and PC.";
 
-  const signedIn = Boolean(cloudUser);
   const authButton = $("#openCloudAuthBtn");
-  if (authButton) authButton.hidden = signedIn;
+  if (authButton) authButton.hidden = hasCloudIdentity;
 
   const sessionPanel = $("#cloudSessionPanel");
-  if (sessionPanel) sessionPanel.classList.toggle("hidden", !signedIn);
+  if (sessionPanel) sessionPanel.classList.toggle("hidden", !hasCloudIdentity);
 
   const email = $("#cloudEmail");
-  if (email) email.textContent = signedIn ? cloudUser.email || "Cloud account" : "Not signed in";
+  if (email) {
+    email.textContent = signedIn
+      ? `${cloudUserDisplayName()} · ${cloudUser.email || "Cloud account"}`
+      : activeCloudAccount
+        ? `${activeAccount.name || "Cloud profile"} · ${activeAccount.cloudEmail || "Cloud account"}`
+        : "Not signed in";
+  }
 
-  const openButton = $("#openCloudProfileBtn");
-  if (openButton) openButton.disabled = !signedIn || isActiveCloudProfile();
+  const cloudStateLine = $("#cloudStateLine");
+  if (cloudStateLine) {
+    cloudStateLine.textContent = !hasCloudIdentity
+      ? "Sign in to sync across devices."
+      : isActiveCloudProfile()
+        ? "Cloud profile active on this device."
+        : needsReconnect
+          ? "Cloud session expired. Use Manage Profile to sign in again."
+          : activeCloudAccount
+            ? "Cloud profile open. Manage Profile has the account actions."
+          : "Signed in, local profile active. Use Manage Profile to switch or transfer.";
+  }
 
-  const migrateButton = $("#migrateCloudBtn");
-  if (migrateButton) migrateButton.disabled = !signedIn || !activeAccount || isActiveCloudProfile();
-
-  const syncButton = $("#syncNowBtn");
-  if (syncButton) syncButton.disabled = !signedIn || !isActiveCloudProfile();
-
-  const signOutButton = $("#cloudSignOutBtn");
-  if (signOutButton) signOutButton.disabled = !signedIn;
+  const manageCloudProfileButton = $("#cloudManageProfileBtn");
+  if (manageCloudProfileButton) manageCloudProfileButton.disabled = !activeAccount && !signedIn;
 
   const bridgePanel = $("#mt5BridgePanel");
   if (bridgePanel) bridgePanel.classList.toggle("hidden", !signedIn);
@@ -844,6 +1509,7 @@ function syncCloudUi() {
   if (output && latestMt5BridgeSetup) output.value = latestMt5BridgeSetup;
 
   renderMt5Inbox();
+  syncProfileManagementUi();
 }
 
 function initSupabaseClient() {
@@ -857,10 +1523,11 @@ function initSupabaseClient() {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true
+      detectSessionInUrl: true,
+      storage: createCloudAuthStorage()
     }
   });
-  setCloudStatus("Ready", "Sign in with email/password to sync between devices.", "ready");
+  setCloudStatus("Ready", "Sign in with email/password or Google to sync between devices.", "ready");
   return true;
 }
 
@@ -881,7 +1548,9 @@ async function initCloudSession() {
 function ensureCloudAccount(user) {
   const id = `cloud-${user.id}`;
   const email = user.email || "cloud-user";
-  const fallbackName = email.includes("@") ? email.split("@")[0] : "Cloud profile";
+  const fallbackName = cloudUserDisplayName(user) || (email.includes("@") ? email.split("@")[0] : "Cloud profile");
+  const avatarUrl = cloudUserAvatar(user);
+  const provider = cloudUserProvider(user);
   let account = accountById(id);
   if (!account) {
     account = {
@@ -889,12 +1558,16 @@ function ensureCloudAccount(user) {
       name: fallbackName,
       cloudUserId: user.id,
       cloudEmail: email,
+      cloudProvider: provider,
+      avatarUrl,
       createdAt: new Date().toISOString()
     };
     accounts = [...accounts, account];
   } else {
     account.cloudUserId = user.id;
     account.cloudEmail = email;
+    account.cloudProvider = provider;
+    account.avatarUrl = avatarUrl;
     if (!account.name) account.name = fallbackName;
   }
   saveAccounts();
@@ -946,12 +1619,18 @@ function applyCloudProfileRow(row, message = "") {
       ...defaultSettings,
       ...(row.settings && typeof row.settings === "object" ? row.settings : {})
     };
+    normalizeSettingsLists();
     analyticsRange = settings.analyticsRange || "all";
     analyticsCustomStart = settings.analyticsCustomStart || "";
     analyticsCustomEnd = settings.analyticsCustomEnd || "";
+    periodPlPeriod = ["day", "month", "year"].includes(settings.periodPlPeriod) ? settings.periodPlPeriod : "day";
+    historyRange = settings.historyRange || "all";
+    historyCustomStart = settings.historyCustomStart || "";
+    historyCustomEnd = settings.historyCustomEnd || "";
     marketChartPair = settings.marketChartPair || defaultPair;
     marketChartInterval = settings.marketChartInterval || "1D";
     if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
+    applyThemePreference();
 
     const incomingTrades = Array.isArray(row.trades) ? row.trades : [];
     incomingTrades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
@@ -995,7 +1674,7 @@ async function upsertCloudSnapshot(snapshot = currentJournalSnapshot(), reason =
     supabaseClient
       .from(cloudProfileTable)
       .upsert(cloudPayloadFromSnapshot(snapshot), { onConflict: "user_id" }),
-    "Cloud save timed out. Check internet/Supabase, then press Email Sync again."
+    "Cloud save timed out. Check internet/Supabase, then use Sync Now again."
   );
 
   if (error) {
@@ -1083,7 +1762,7 @@ function subscribeCloudProfile() {
         const activeCloud = isActiveCloudProfile();
         setCloudStatus(
           activeCloud ? "Synced" : "Ready",
-          "Email Sync is available. Realtime listener paused, so use Email Sync or Refresh if live updates lag.",
+          "Realtime listener paused, so use Sync Now or Refresh if live updates lag.",
           activeCloud ? "success" : "ready"
         );
       }
@@ -1294,6 +1973,7 @@ async function fetchMt5DetectedOrders(options = {}) {
       }));
       mt5InboxState = {
         kind: mt5DetectedOrders.length ? "ready" : "empty",
+        mode: "history",
         message: mt5DetectedOrders.length ? "" : "No MT5 orders found in that history period."
       };
       renderMt5Inbox();
@@ -1306,8 +1986,10 @@ async function fetchMt5DetectedOrders(options = {}) {
     mt5DetectedOrders = visibleOrders;
     mt5InboxState = {
       kind: mt5DetectedOrders.length ? "ready" : "empty",
+      mode: "live",
+      duplicateCount,
       message: duplicateCount
-        ? duplicateCount + " detected MT5 " + (duplicateCount === 1 ? "order is" : "orders are") + " already in Trade History."
+        ? duplicateCount + " detected MT5 " + (duplicateCount === 1 ? "order is" : "orders are") + " already in Trade History and hidden from live scan. Use Display History to review or ignore recorded orders."
         : "No new closed positions. Keep the MT5 bridge attached, then press Refresh after a position closes."
     };
     renderMt5Inbox();
@@ -1611,6 +2293,8 @@ function mt5OrderToTrade(order) {
     sessionAuto: Boolean(autoSession),
     direction,
     setup: "",
+    setupType: "Custom / Other",
+    setupScore: 70,
     entry,
     stop,
     target,
@@ -1633,6 +2317,8 @@ function mt5OrderToTrade(order) {
     commissionPerLot: settings.commissionPerLot,
     commission,
     swap,
+    positive: "None",
+    positiveTags: [],
     mistake: "None",
     confidence: 60,
     discipline: 70,
@@ -1685,13 +2371,118 @@ async function markMt5OrderStatus(orderId, status = "recorded") {
   renderMt5Inbox();
 }
 
+async function ignoreAlreadyRecordedMt5Orders() {
+  if (!supabaseClient || !cloudUser) return;
+  const recordedOrders = mt5DetectedOrders.filter((order) => Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order)));
+  const ids = recordedOrders.map((order) => order.id).filter(Boolean);
+  if (!ids.length) {
+    showToast("No already recorded MT5 orders to ignore.");
+    return;
+  }
+
+  recordedOrders.forEach(hideMt5OrderFromRealtime);
+  const { error } = await supabaseClient
+    .from(mt5OrderTable)
+    .update({ status: "ignored", updated_at: new Date().toISOString() })
+    .eq("user_id", cloudUser.id)
+    .in("id", ids);
+
+  if (error) {
+    showToast(friendlyCloudError(error));
+    return;
+  }
+
+  mt5DetectedOrders = mt5DetectedOrders.filter((order) => !ids.includes(order.id));
+  if (!mt5DetectedOrders.length) {
+    mt5InboxState = { kind: "empty", message: "Already recorded MT5 orders are hidden. Use Display History to review the full period again." };
+  }
+  renderMt5Inbox();
+  showToast("Ignored " + ids.length + " already recorded MT5 " + (ids.length === 1 ? "order." : "orders."));
+}
+
+function mt5OrderInboxStatus(order) {
+  const alreadyRecorded = Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order));
+  const status = String(order.status || "new").toLowerCase();
+  if (alreadyRecorded) {
+    return {
+      label: "Already recorded",
+      className: "recorded",
+      disableRecord: true,
+      recordText: "Recorded"
+    };
+  }
+  if (status === "recorded") {
+    return {
+      label: "Journal entry missing",
+      className: "missing",
+      disableRecord: false,
+      recordText: "Record again"
+    };
+  }
+  if (status === "ignored") {
+    return {
+      label: "Hidden in live",
+      className: "ignored",
+      disableRecord: false,
+      recordText: "Record again"
+    };
+  }
+  return {
+    label: "New",
+    className: "new",
+    disableRecord: false,
+    recordText: "Record"
+  };
+}
+
+function renderMt5InboxSummary() {
+  if (!mt5DetectedOrders.length) return "";
+  const reviewMode = mt5InboxState.mode === "history" || mt5HistoryReviewRange.active;
+  const alreadyRecordedCount = mt5DetectedOrders.filter((order) => Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order))).length;
+  const recordAgainCount = mt5DetectedOrders.filter((order) => {
+    const status = String(order.status || "new").toLowerCase();
+    return !Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order)) && (status === "recorded" || status === "ignored");
+  }).length;
+  const rangeText = mt5HistoryReviewRange.start || mt5HistoryReviewRange.end
+    ? `${mt5HistoryReviewRange.start || "Start"} to ${mt5HistoryReviewRange.end || "Latest"}`
+    : "selected period";
+  const duplicateNote = mt5InboxState.duplicateCount
+    ? ` ${mt5InboxState.duplicateCount} already-recorded ${mt5InboxState.duplicateCount === 1 ? "order was" : "orders were"} hidden from live scan.`
+    : "";
+  const title = reviewMode ? "History review" : "Live scan";
+  const copy = reviewMode
+    ? `Showing MT5 history for ${rangeText}, including recorded and ignored orders. Deleted journal trades can be recorded again here.`
+    : `Showing new MT5 closed positions only.${duplicateNote} Use Display History to review recorded or ignored orders.`;
+  const stats = [
+    `${mt5DetectedOrders.length} shown`,
+    alreadyRecordedCount ? `${alreadyRecordedCount} already recorded` : "",
+    recordAgainCount ? `${recordAgainCount} record again` : ""
+  ].filter(Boolean).join(" · ");
+  return `
+    <div class="mt5-inbox-summary ${reviewMode ? "history" : "live"}">
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(copy)}</p>
+      </div>
+      <span>${escapeHtml(stats)}</span>
+    </div>
+  `;
+}
+
 function renderMt5Inbox() {
   const panel = $("#mt5InboxPanel");
   const list = $("#mt5InboxList");
   if (!panel || !list) return;
+  const ignoreRecordedButton = $("#ignoreRecordedMt5OrdersBtn");
   const hasOrders = Boolean(mt5DetectedOrders.length);
+  const recordedCount = mt5DetectedOrders.filter((order) => Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order))).length;
   const showPanel = Boolean(cloudUser && (hasOrders || mt5InboxState.kind !== "idle"));
   panel.classList.toggle("hidden", !showPanel);
+  if (ignoreRecordedButton) {
+    ignoreRecordedButton.classList.toggle("hidden", !showPanel || recordedCount === 0);
+    ignoreRecordedButton.disabled = recordedCount === 0;
+    ignoreRecordedButton.innerHTML = `${iconMarkup("trash")} ${recordedCount ? `Ignore recorded (${recordedCount})` : "Ignore recorded"}`;
+  }
   if (!showPanel) {
     list.innerHTML = "";
     return;
@@ -1710,7 +2501,9 @@ function renderMt5Inbox() {
     return;
   }
 
-  list.innerHTML = mt5DetectedOrders
+  list.innerHTML = [
+    renderMt5InboxSummary(),
+    ...mt5DetectedOrders
     .map((order) => {
       const direction = String(order.direction || "Buy").toLowerCase() === "sell" ? "Sell" : "Buy";
       const source = mt5OrderSource(order);
@@ -1721,36 +2514,37 @@ function renderMt5Inbox() {
       const takeProfit = parseOptionalNumber(order.take_profit);
       const stopText = stopLoss && stopLoss > 0 ? rateFormatter.format(stopLoss) : "Not sent";
       const targetText = takeProfit && takeProfit > 0 ? rateFormatter.format(takeProfit) : "Not sent";
-      const alreadyRecorded = Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order));
+      const inboxStatus = mt5OrderInboxStatus(order);
       return `
         <article class="mt5-order-card">
           <div>
             <strong>${escapeHtml(normalizeBrokerSymbol(order.symbol))}
               <span class="mt5-pill ${direction.toLowerCase()}">${escapeHtml(direction)}</span>
               <span class="mt5-source-pill ${escapeHtml(mt5SourceClass(source))}">${escapeHtml(source)}</span>
+              <span class="mt5-review-pill ${escapeHtml(inboxStatus.className)}">${escapeHtml(inboxStatus.label)}</span>
             </strong>
             <p>${escapeHtml(mt5OrderDisplayDateTime(order, "closed"))} | ${numberFormatter.format(toNumber(order.lot_size))} lot | Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
             <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Stop ${escapeHtml(stopText)} | Target ${escapeHtml(targetText)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
           </div>
           <div class="mt5-order-actions">
-            ${alreadyRecorded ? '<span class="mt5-recorded-flag">Already recorded</span>' : ""}
-            <button class="mini-button text-mini" type="button" data-mt5-action="record" data-id="${escapeHtml(order.id)}" ${alreadyRecorded ? "disabled" : ""}>${alreadyRecorded ? "Recorded" : "Record"}</button>
+            ${inboxStatus.disableRecord ? '<span class="mt5-recorded-flag">Already recorded</span>' : ""}
+            <button class="mini-button text-mini" type="button" data-mt5-action="record" data-id="${escapeHtml(order.id)}" ${inboxStatus.disableRecord ? "disabled" : ""}>${escapeHtml(inboxStatus.recordText)}</button>
             <button class="mini-button text-mini danger" type="button" data-mt5-action="ignore" data-id="${escapeHtml(order.id)}">Ignore</button>
           </div>
         </article>
       `;
     })
-    .join("");
+  ].join("");
 }
 
 async function openCloudProfile(options = {}) {
-  const { silent = false } = options;
+  const { silent = false, keepSignedIn = cloudSessionShouldPersist() } = options;
   if (!cloudUser) {
     showAuthOverlay("cloud", false);
     return;
   }
   const account = ensureCloudAccount(cloudUser);
-  setActiveAccount(account, silent ? "" : "Cloud profile opened.");
+  setActiveAccount(account, silent ? "" : "Cloud profile opened.", { keepSignedIn });
   subscribeCloudProfile();
   subscribeMt5Orders();
   try {
@@ -1801,6 +2595,7 @@ async function handleCloudSessionChange(session, options = {}) {
   cloudSession = session || null;
   cloudUser = cloudSession?.user || null;
   if (!cloudUser) {
+    const activeCloudAccount = isCloudAccount(activeAccount);
     if (cloudSubscription) {
       supabaseClient.removeChannel(cloudSubscription);
       cloudSubscription = null;
@@ -1810,7 +2605,13 @@ async function handleCloudSessionChange(session, options = {}) {
       mt5OrderSubscription = null;
     }
     mt5DetectedOrders = [];
-    setCloudStatus("Ready", "Sign in with email/password to sync between devices.", "ready");
+    setCloudStatus(
+      activeCloudAccount ? "Reconnect" : "Ready",
+      activeCloudAccount
+        ? "Sign in again to reconnect this cloud profile."
+        : "Sign in with email/password or Google to sync between devices.",
+      activeCloudAccount ? "pending" : "ready"
+    );
     renderMt5Inbox();
     return;
   }
@@ -1819,12 +2620,13 @@ async function handleCloudSessionChange(session, options = {}) {
   subscribeCloudProfile();
   subscribeMt5Orders();
   fetchMt5DetectedOrders({ silent: true }).catch(() => {});
+  const keepSignedIn = options.keepSignedIn ?? cloudSessionShouldPersist();
   if (!activeAccount || (isCloudAccount(activeAccount) && activeAccount.cloudUserId === cloudUser.id)) {
-    await openCloudProfile({ silent: options.source === "init" });
+    await openCloudProfile({ silent: options.source === "init", keepSignedIn });
     return;
   }
 
-  setCloudStatus("Ready", "Cloud signed in. Migrate Local to upload this profile, or Open to use cloud data.", "ready");
+  setCloudStatus("Ready", "Cloud signed in. Use Manage Profile to switch profiles or transfer local data.", "ready");
   syncCloudUi();
 }
 
@@ -1846,11 +2648,14 @@ async function handleCloudSignIn(event) {
 
   try {
     const { email, password } = cloudAuthValues(form);
+    const keepControl = form.elements.namedItem("keepSignedIn");
+    const keepSignedIn = !keepControl || keepControl.checked !== false;
+    setCloudSessionPersistenceMode(keepSignedIn);
     setCloudStatus("Signing in", "Checking Supabase email/password.", "pending");
     const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
     if (error) throw error;
     form.elements.password.value = "";
-    await handleCloudSessionChange(data.session, { source: "signIn" });
+    await handleCloudSessionChange(data.session, { source: "signIn", keepSignedIn });
     hideAuthOverlay();
     showToast(isActiveCloudProfile() ? "Cloud sync active." : "Cloud signed in. Migrate or open cloud when ready.");
   } catch (error) {
@@ -1859,7 +2664,39 @@ async function handleCloudSignIn(event) {
   }
 }
 
+async function handleCloudGoogleSignIn(event) {
+  if (!supabaseClient) {
+    showToast("Cloud sync is not loaded yet.");
+    return;
+  }
+  const redirectTo = cloudRedirectUrl();
+  if (!redirectTo) {
+    showToast("Google login needs the app opened through http://127.0.0.1, localhost, or GitHub Pages.");
+    return;
+  }
+  try {
+    const keepSignedIn = keepSignedInFromTrigger(event?.currentTarget);
+    setCloudSessionPersistenceMode(keepSignedIn);
+    setCloudStatus("Google", "Redirecting to Google sign-in. Gmail access is not requested.", "pending");
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo,
+        scopes: "openid email profile",
+        queryParams: {
+          prompt: "select_account"
+        }
+      }
+    });
+    if (error) throw error;
+  } catch (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+    showToast(friendlyCloudError(error));
+  }
+}
+
 async function handleCloudSignUp(event) {
+  event.preventDefault();
   const form = event.currentTarget.closest("form");
   if (!supabaseClient || !form) {
     showToast("Cloud sync is not loaded yet.");
@@ -1868,12 +2705,18 @@ async function handleCloudSignUp(event) {
 
   try {
     const { email, password } = cloudAuthValues(form);
-    setCloudStatus("Creating", "Creating Supabase email/password account.", "pending");
+    if (form.elements.confirm && form.elements.confirm.value !== password) {
+      showToast("Passwords do not match.");
+      form.elements.confirm.focus();
+      return;
+    }
+    setCloudSessionPersistenceMode(true);
+    setCloudStatus("Creating", "Creating your FX Edge account.", "pending");
     const { data, error } = await supabaseClient.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: window.location.href.split("#")[0]
+        emailRedirectTo: cloudRedirectUrl() || window.location.href.split("#")[0]
       }
     });
     if (error) throw error;
@@ -1895,13 +2738,111 @@ async function handleCloudSignUp(event) {
 async function handleCloudSignOut() {
   if (!supabaseClient || !cloudUser) return;
   const wasCloudProfile = isActiveCloudProfile();
+  let signOutError = null;
   try {
-    await supabaseClient.auth.signOut();
-    if (wasCloudProfile) lockAccount(false);
-    setCloudStatus("Ready", "Signed out of cloud. Local profiles still work offline.", "ready");
-    showToast("Cloud signed out.");
+    await supabaseClient.auth.signOut({ scope: "local" });
+  } catch (error) {
+    signOutError = error;
+  }
+  clearStoredCloudSession();
+  setCloudSessionPersistenceMode(true);
+  await handleCloudSessionChange(null);
+  if (wasCloudProfile) lockAccount(false);
+  setCloudStatus("Ready", "Signed out of cloud. Local profiles still work offline.", "ready");
+  showToast(signOutError ? "Signed out locally. Supabase revoke can retry when online." : "Cloud signed out.");
+}
+
+async function handleAccountLogout() {
+  const shouldSignOutCloud = Boolean(supabaseClient && cloudUser);
+  let signOutError = null;
+  try {
+    if (shouldSignOutCloud) {
+      await supabaseClient.auth.signOut({ scope: "local" });
+    }
+  } catch (error) {
+    signOutError = error;
+  }
+
+  try {
+    if (shouldSignOutCloud) {
+      clearStoredCloudSession();
+      setCloudSessionPersistenceMode(true);
+      await handleCloudSessionChange(null);
+    }
+    lockAccount(false);
+    setCloudStatus("Ready", "Signed out. Choose Google, email, or a local profile to continue.", "ready");
+    showToast(signOutError ? "Signed out locally. Supabase revoke can retry when online." : shouldSignOutCloud ? "Signed out of this device." : "Account locked.");
   } catch (error) {
     setCloudStatus("Error", friendlyCloudError(error), "error");
+    showToast(friendlyCloudError(error));
+  }
+}
+
+function openProfileManagement() {
+  if (!activeAccount) {
+    if (cloudUser) {
+      openCloudProfile();
+      return;
+    }
+    showAuthOverlay("cloud", true);
+    return;
+  }
+  syncProfileManagementUi();
+  $("#profileManagementModal")?.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+  $("#profileDisplayNameInput")?.focus();
+}
+
+function closeProfileManagement() {
+  $("#profileManagementModal")?.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
+async function handleProfileNameSubmit(event) {
+  event.preventDefault();
+  if (!activeAccount) {
+    showAuthOverlay("cloud", true);
+    return;
+  }
+  const form = event.currentTarget;
+  const name = cleanAccountName(form.elements.displayName.value);
+  if (name.length < 2) {
+    showToast("Use at least 2 characters for the profile name.");
+    form.elements.displayName.focus();
+    return;
+  }
+
+  activeAccount.name = name;
+  const storedAccount = accountById(activeAccount.id);
+  if (storedAccount) storedAccount.name = name;
+  saveAccounts();
+  syncAccountUi();
+
+  if (isActiveCloudProfile()) {
+    try {
+      await upsertCloudSnapshot(currentJournalSnapshot(name), "profile");
+    } catch (error) {
+      showToast(friendlyCloudError(error));
+      return;
+    }
+  }
+
+  syncProfileManagementUi();
+  showToast("Profile name saved.");
+}
+
+async function syncProfileNow() {
+  if (!isActiveCloudProfile() || !supabaseClient || !cloudUser) {
+    showToast("Open your cloud profile before syncing.");
+    return;
+  }
+  try {
+    await upsertCloudSnapshot(currentJournalSnapshot(), "manual");
+    await fetchCloudProfile({ apply: true, createIfMissing: true, silent: true });
+    await fetchMt5DetectedOrders({ silent: true });
+    syncProfileManagementUi();
+    showToast("Profile synced.");
+  } catch (error) {
     showToast(friendlyCloudError(error));
   }
 }
@@ -2121,6 +3062,49 @@ function analyticsRangeName(range = analyticsRange) {
   return names[range] || names.all;
 }
 
+function startOfQuarter(date) {
+  const next = new Date(date);
+  const quarterMonth = Math.floor(next.getMonth() / 3) * 3;
+  next.setMonth(quarterMonth, 1);
+  return next;
+}
+
+function historyRangeBounds(range = historyRange) {
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  if (range === "today") return { start: todayKey, end: todayKey };
+  if (range === "yesterday") {
+    const yesterday = localDateKey(addDays(today, -1));
+    return { start: yesterday, end: yesterday };
+  }
+  if (range === "thisWeek") return { start: localDateKey(startOfWeek(today)), end: todayKey };
+  if (range === "last7") return { start: localDateKey(addDays(today, -6)), end: todayKey };
+  if (range === "thisMonth") return { start: `${todayKey.slice(0, 7)}-01`, end: todayKey };
+  if (range === "last30") return { start: localDateKey(addDays(today, -29)), end: todayKey };
+  if (range === "thisQuarter") return { start: localDateKey(startOfQuarter(today)), end: todayKey };
+  if (range === "thisYear") return { start: `${today.getFullYear()}-01-01`, end: todayKey };
+  if (range === "custom") return { start: historyCustomStart, end: historyCustomEnd };
+  return { start: "", end: "" };
+}
+
+function updateHistoryFilterControls() {
+  const select = $("#historyPeriodFilter");
+  const startInput = $("#historyStartFilter");
+  const endInput = $("#historyEndFilter");
+  if (!select || !startInput || !endInput) return;
+  select.value = historyRange || "all";
+  const { start, end } = historyRangeBounds();
+  startInput.value = start || "";
+  endInput.value = end || "";
+}
+
+function saveHistoryFilterSettings() {
+  settings.historyRange = historyRange;
+  settings.historyCustomStart = historyCustomStart;
+  settings.historyCustomEnd = historyCustomEnd;
+  saveSettings();
+}
+
 function getAnalyticsTrades() {
   const { start, end } = analyticsRangeBounds();
   return trades.filter((trade) => {
@@ -2156,6 +3140,17 @@ function saveAnalyticsRange() {
   settings.analyticsRange = analyticsRange;
   settings.analyticsCustomStart = analyticsCustomStart;
   settings.analyticsCustomEnd = analyticsCustomEnd;
+  saveSettings();
+}
+
+function updatePeriodPlPeriodControls() {
+  $$(".period-pl-period .segment").forEach((button) => {
+    button.classList.toggle("active", button.dataset.periodPlPeriod === periodPlPeriod);
+  });
+}
+
+function savePeriodPlPeriod() {
+  settings.periodPlPeriod = periodPlPeriod;
   saveSettings();
 }
 
@@ -2401,6 +3396,326 @@ function appendPairOptions(select, includeAddOption = false) {
     customOption.textContent = "Add custom pair...";
     select.appendChild(customOption);
   }
+}
+
+function uniqueChoices(defaults = [], custom = []) {
+  const seen = new Set();
+  return [...defaults, ...(Array.isArray(custom) ? custom : [])]
+    .map((choice) => String(choice || "").trim())
+    .filter((choice) => {
+      if (!choice) return false;
+      const key = choice.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function appendTradeChoiceOptions(select, defaults, custom, selectedValue, options = {}) {
+  if (!select) return;
+  const { placeholder = "", addLabel = "Add custom..." } = options;
+  const selected = String(selectedValue || "").trim();
+  const choices = uniqueChoices(defaults, custom);
+  if (selected && !choices.some((choice) => choice.toLowerCase() === selected.toLowerCase()) && selected !== customChoiceValue) {
+    choices.push(selected);
+  }
+
+  select.innerHTML = "";
+  if (placeholder) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = placeholder;
+    select.appendChild(option);
+  }
+
+  choices.forEach((choice) => {
+    const option = document.createElement("option");
+    option.value = choice;
+    option.textContent = choice;
+    select.appendChild(option);
+  });
+
+  const addOption = document.createElement("option");
+  addOption.value = customChoiceValue;
+  addOption.textContent = addLabel;
+  select.appendChild(addOption);
+  select.value = [...select.options].some((option) => option.value === selected) ? selected : "";
+}
+
+function appendSetupTypeOptions(selectedValue = "", select = $("#setupTypeSelect")) {
+  if (!select) return;
+  const selected = String(selectedValue || "").trim();
+  select.innerHTML = "";
+  defaultSetupTypes.forEach((type) => {
+    const option = document.createElement("option");
+    option.value = type;
+    option.textContent = type;
+    select.appendChild(option);
+  });
+  select.value = defaultSetupTypes.includes(selected) ? selected : "Custom / Other";
+}
+
+function renderStrategySetupTypeOptions(selectedValue = "") {
+  const form = $("#strategyForm");
+  if (!form) return;
+  appendSetupTypeOptions(selectedValue || form.elements.setupType?.value, form.elements.setupType);
+}
+
+function renderTradeChoiceOptions(selected = {}) {
+  const form = $("#tradeForm");
+  if (!form) return;
+  appendTradeChoiceOptions(form.elements.setup, defaultSetups, settings.customSetups, selected.setup ?? form.elements.setup.value, {
+    placeholder: "Select setup",
+    addLabel: "Add custom setup..."
+  });
+  appendTradeChoiceOptions(form.elements.positive, defaultPositiveTags, settings.customPositiveTags, selected.positive ?? form.elements.positive.value, {
+    addLabel: "Add custom positive..."
+  });
+  appendTradeChoiceOptions(form.elements.mistake, defaultMistakeTags, settings.customMistakeTags, selected.mistake ?? form.elements.mistake.value, {
+    addLabel: "Add custom mistake..."
+  });
+  appendSetupTypeOptions(selected.setupType ?? form.elements.setupType.value);
+}
+
+function addCustomTradeChoice(fieldName) {
+  const config = {
+    setup: { settingsKey: "customSetups", label: "setup" },
+    positive: { settingsKey: "customPositiveTags", label: "positive behavior" },
+    mistake: { settingsKey: "customMistakeTags", label: "mistake" }
+  }[fieldName];
+  const form = $("#tradeForm");
+  if (!config || !form) return;
+  const currentValue = form.elements[fieldName].dataset.previousValue || "";
+  const value = String(prompt(`Add custom ${config.label}`, "") || "").trim();
+  if (!value) {
+    renderTradeChoiceOptions({ [fieldName]: currentValue });
+    return;
+  }
+  if (!Array.isArray(settings[config.settingsKey])) settings[config.settingsKey] = [];
+  const exists = uniqueChoices([], settings[config.settingsKey]).some((choice) => choice.toLowerCase() === value.toLowerCase())
+    || uniqueChoices(
+      fieldName === "setup" ? defaultSetups : fieldName === "positive" ? defaultPositiveTags : defaultMistakeTags,
+      []
+    ).some((choice) => choice.toLowerCase() === value.toLowerCase());
+  if (!exists) settings[config.settingsKey].push(value);
+  saveSettings();
+  renderTradeChoiceOptions({ [fieldName]: value });
+  form.elements[fieldName].value = value;
+  form.elements[fieldName].dataset.previousValue = value;
+  if (fieldName === "setup") syncSetupTypeFromSetup();
+  if (fieldName === "mistake") applyScoreEngine();
+  showToast(`${value} added.`);
+}
+
+function setupTypeForSetup(setup) {
+  const normalized = String(setup || "").trim().toLowerCase();
+  if (!normalized) return "Custom / Other";
+  const match = Object.entries(setupTypeBySetup).find(([name]) => name.toLowerCase() === normalized);
+  return match ? match[1] : "Custom / Other";
+}
+
+function syncSetupTypeFromSetup() {
+  const form = $("#tradeForm");
+  if (!form) return;
+  form.elements.setupType.value = setupTypeForSetup(form.elements.setup.value);
+}
+
+function scoreFromChecks(checks = {}, group = []) {
+  return group.reduce((total, driver) => total + (checks[driver.name] ? driver.points : 0), 0);
+}
+
+function disciplineCapForMistake(mistake) {
+  const selected = String(mistake || "None").trim();
+  if (!selected || selected === "None") return 100;
+  const direct = disciplineCapsByMistake[selected];
+  if (direct) return direct;
+  const match = Object.entries(disciplineCapsByMistake).find(([name]) => name.toLowerCase() === selected.toLowerCase());
+  return match ? match[1] : 100;
+}
+
+function calculateScoreEngine(checks = {}, mistake = "None") {
+  const setup = scoreFromChecks(checks, scoreDriverGroups.setup);
+  const confidence = scoreFromChecks(checks, scoreDriverGroups.confidence);
+  const rawDiscipline = scoreFromChecks(checks, scoreDriverGroups.discipline);
+  const disciplineCap = disciplineCapForMistake(mistake);
+  const discipline = Math.min(rawDiscipline, disciplineCap);
+  return { setup, confidence, discipline, rawDiscipline, disciplineCap };
+}
+
+function scoreChecksFromForm() {
+  const form = $("#tradeForm");
+  if (!form) return {};
+  return scoreDriverNames.reduce((checks, name) => {
+    checks[name] = Boolean(form.elements[name]?.checked);
+    return checks;
+  }, {});
+}
+
+function setScoreChecks(checks = {}) {
+  const form = $("#tradeForm");
+  if (!form) return;
+  scoreDriverNames.forEach((name) => {
+    if (form.elements[name]) form.elements[name].checked = Boolean(checks[name]);
+  });
+}
+
+function scoreChecksFromScore(group, score) {
+  let remaining = Math.max(toNumber(score), 0);
+  return group.reduce((checks, driver) => {
+    checks[driver.name] = remaining >= driver.points;
+    if (checks[driver.name]) remaining -= driver.points;
+    return checks;
+  }, {});
+}
+
+function defaultScoreChecks() {
+  return {
+    scoreSetupH1: false,
+    scoreSetupM15: false,
+    scoreSetupZone: false,
+    scoreSetupSl: false,
+    scoreSetupTp: false,
+    scoreSetupNoChase: false,
+    scoreConfidenceExplain: false,
+    scoreConfidenceInvalidation: false,
+    scoreConfidenceSlTp: false,
+    scoreConfidenceEmotion: true,
+    scoreConfidenceLimits: true,
+    scoreDisciplinePlan: false,
+    scoreDisciplineRisk: false,
+    scoreDisciplineSl: true,
+    scoreDisciplineExit: false,
+    scoreDisciplineNoEarlyExit: true,
+    scoreDisciplineNoNoise: true,
+    scoreDisciplineNoReverse: true,
+    scoreDisciplineDailyLimit: true
+  };
+}
+
+function normalizeChecklistState(value) {
+  const today = localDateKey();
+  const state = value && typeof value === "object" ? value : {};
+  const checks = state.date === today && state.checks && typeof state.checks === "object" ? state.checks : {};
+  return {
+    date: today,
+    checks: { ...checks }
+  };
+}
+
+function normalizeDailyReview(review = {}) {
+  const date = String(review.date || "").slice(0, 10) || localDateKey();
+  const fields = [
+    "startingBalance",
+    "endingBalance",
+    "tradesTaken",
+    "winLoss",
+    "netPl",
+    "screenshots",
+    "followedPlan",
+    "reversedEmotionally",
+    "closedEarly",
+    "movedSl",
+    "overtraded",
+    "biggestEmotion",
+    "bestBehavior",
+    "worstBehavior",
+    "mainLesson",
+    "ruleForTomorrow"
+  ];
+  const normalized = { date, updatedAt: review.updatedAt || new Date().toISOString() };
+  fields.forEach((field) => {
+    normalized[field] = String(review[field] ?? "").trim();
+  });
+  normalized.followedPlan = normalized.followedPlan || "Yes";
+  normalized.reversedEmotionally = normalized.reversedEmotionally || "No";
+  normalized.closedEarly = normalized.closedEarly || "No";
+  normalized.movedSl = normalized.movedSl || "No";
+  normalized.overtraded = normalized.overtraded || "No";
+  return normalized;
+}
+
+function normalizeDailyReviews(value) {
+  const reviews = Array.isArray(value) ? value : [];
+  const byDate = new Map();
+  reviews.forEach((review) => {
+    const normalized = normalizeDailyReview(review);
+    byDate.set(normalized.date, normalized);
+  });
+  return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function inferScoreChecksFromTrade(trade = {}) {
+  if (trade.scoreChecks && typeof trade.scoreChecks === "object") {
+    return { ...defaultScoreChecks(), ...trade.scoreChecks };
+  }
+
+  return {
+    ...defaultScoreChecks(),
+    ...scoreChecksFromScore(scoreDriverGroups.setup, trade.setupScore ?? 0),
+    ...scoreChecksFromScore(scoreDriverGroups.confidence, trade.confidence ?? 0),
+    ...scoreChecksFromScore(scoreDriverGroups.discipline, trade.discipline ?? 0)
+  };
+}
+
+function normalizeScorePercent(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  return clamp(Math.round(toNumber(value, fallback)), 0, 100);
+}
+
+function normalizeTradeChoice(value, fallback = "None") {
+  const text = String(value || "").trim();
+  return text || fallback;
+}
+
+function normalizeTradeReviewFields(trade = {}) {
+  const setup = String(trade.setup || "").trim();
+  const setupType = String(trade.setupType || "").trim() || setupTypeForSetup(setup);
+  const existingPositiveTags = uniqueChoices([], Array.isArray(trade.positiveTags) ? trade.positiveTags : []);
+  const positive = normalizeTradeChoice(trade.positive || existingPositiveTags[0], "None");
+  const positiveTags = positive === "None" ? existingPositiveTags.filter((tag) => tag !== "None") : uniqueChoices([positive], existingPositiveTags);
+  const mistake = normalizeTradeChoice(trade.mistake, "None");
+  const hasScoreChecks = trade.scoreChecks && typeof trade.scoreChecks === "object";
+  const storedSetupScore = normalizeScorePercent(trade.setupScore, 70);
+  const storedConfidence = normalizeScorePercent(trade.confidence, 60);
+  const storedDiscipline = normalizeScorePercent(trade.discipline, 70);
+  const scoreChecks = hasScoreChecks
+    ? inferScoreChecksFromTrade(trade)
+    : {
+        ...defaultScoreChecks(),
+        ...scoreChecksFromScore(scoreDriverGroups.setup, storedSetupScore),
+        ...scoreChecksFromScore(scoreDriverGroups.confidence, storedConfidence),
+        ...scoreChecksFromScore(scoreDriverGroups.discipline, storedDiscipline)
+      };
+  const calculated = calculateScoreEngine(scoreChecks, mistake);
+
+  return {
+    ...trade,
+    setup,
+    setupType,
+    setupScore: calculated.setup,
+    scoreChecks,
+    positive,
+    positiveTags,
+    mistake,
+    confidence: calculated.confidence,
+    discipline: calculated.discipline
+  };
+}
+
+function applyScoreEngine() {
+  const form = $("#tradeForm");
+  if (!form) return;
+  const scores = calculateScoreEngine(scoreChecksFromForm(), form.elements.mistake.value);
+  form.elements.setupScore.value = scores.setup;
+  form.elements.confidence.value = scores.confidence;
+  form.elements.discipline.value = scores.discipline;
+  const note = $("#scoreEngineNote");
+  if (note) {
+    note.textContent = scores.disciplineCap < scores.rawDiscipline
+      ? `Discipline capped at ${scores.disciplineCap}% by ${form.elements.mistake.value}.`
+      : "Scores update from rule drivers.";
+  }
+  updateSliderOutputs();
 }
 
 function renderMarketChartOptions(selectedPair = marketChartPair) {
@@ -2667,24 +3982,25 @@ function balanceSeriesForPeriod(list, period) {
 }
 
 function withCalculatedTrade(trade) {
-  const contractSize = defaultContractSize(trade.pair);
+  const normalizedTrade = normalizeTradeReviewFields(trade);
+  const contractSize = defaultContractSize(normalizedTrade.pair);
   const calc = calculateTradeNumbers({
-    pair: trade.pair,
-    direction: trade.direction,
-    entry: trade.entry,
-    stop: trade.stop,
-    target: trade.target,
-    exit: trade.exit,
-    lotSize: trade.lotSize,
+    pair: normalizedTrade.pair,
+    direction: normalizedTrade.direction,
+    entry: normalizedTrade.entry,
+    stop: normalizedTrade.stop,
+    target: normalizedTrade.target,
+    exit: normalizedTrade.exit,
+    lotSize: normalizedTrade.lotSize,
     contractSize,
-    quoteToAccount: trade.quoteToAccount,
-    manualR: trade.manualR
+    quoteToAccount: normalizedTrade.quoteToAccount,
+    manualR: normalizedTrade.manualR
   });
   const hasEntryStop = calc.stopPips > 0;
   const hasLot = calc.lotSize > 0 && calc.contractSize > 0;
-  const resultR = hasEntryStop ? roundNumber(calc.resultR, 2) : toNumber(trade.resultR);
+  const resultR = hasEntryStop ? roundNumber(calc.resultR, 2) : toNumber(normalizedTrade.resultR);
   const next = {
-    ...trade,
+    ...normalizedTrade,
     resultR,
     actualR: roundNumber(calc.actualR, 2),
     targetR: roundNumber(calc.targetR, 2),
@@ -2940,7 +4256,7 @@ function buildReportStats(list) {
 }
 
 function qualityScore(strategy) {
-  const fields = ["name", "market", "trigger", "invalidation", "riskRule", "management", "reviewRule"];
+  const fields = ["name", "setupType", "market", "trigger", "invalidation", "riskRule", "management", "reviewRule"];
   const complete = fields.filter((field) => String(strategy[field] || "").trim().length > 8).length;
   return Math.round((complete / fields.length) * 100);
 }
@@ -2953,15 +4269,79 @@ function readinessScore(stats) {
   return Math.round(sampleScore + disciplineScore + expectancyScore + drawdownScore);
 }
 
+function scoreValue(trade, key, fallback = 0) {
+  const value = Number(trade?.[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function dailyDisciplineReport(list = trades) {
+  const today = localDateKey();
+  const todayTrades = list.filter((trade) => String(trade.date || "").slice(0, 10) === today);
+  const count = todayTrades.length;
+  const reviewSaved = Boolean(dailyReviewByDate(today));
+  const mistakes = todayTrades.map((trade) => trade.mistake).filter((mistake) => mistake && mistake !== "None");
+  const majorMistakes = mistakes.filter((mistake) =>
+    ["Revenge Trade", "Instant Reversal", "Overtrade", "Continued After 2 Losses", "Moved SL Emotionally", "No Clear Setup", "Ignored H1 Structure"].includes(mistake)
+  );
+  const avgDiscipline = count ? sum(todayTrades, (trade) => scoreValue(trade, "discipline", 70)) / count : 100;
+  const weakSetupCount = todayTrades.filter((trade) => scoreValue(trade, "setupScore", 70) < 70).length;
+  const lowConfidenceCount = todayTrades.filter((trade) => scoreValue(trade, "confidence", 60) < 60).length;
+  const missingReviewCount = todayTrades.filter((trade) => !String(trade.notes || "").trim()).length;
+  const lossCount = todayTrades.filter((trade) => toNumber(trade.resultR) < 0).length;
+  const goodProfit = sum(todayTrades, (trade) => tradePl(trade)) > Math.max(toNumber(settings.startingBalance, 1000) * 0.02, 20);
+
+  if (!count) {
+    return {
+      grade: "A",
+      tone: "a",
+      title: "Flat discipline",
+      lines: ["0 trades today", reviewSaved ? "Daily review saved." : "No rule breaks recorded.", "Being flat is a professional position."]
+    };
+  }
+
+  let grade = "A";
+  if (majorMistakes.length || avgDiscipline < 40 || count > 5) grade = "F";
+  else if (count > 3 || avgDiscipline < 55 || mistakes.includes("Continued After 2 Losses")) grade = "D";
+  else if (count > 2 || avgDiscipline < 70 || weakSetupCount || lowConfidenceCount) grade = "C";
+  else if (avgDiscipline < 85 || mistakes.length || missingReviewCount || !reviewSaved) grade = "B";
+
+  const title = {
+    A: goodProfit ? "Protect the day" : "Professional execution",
+    B: "Good control",
+    C: "Mixed discipline",
+    D: "Rule pressure",
+    F: "Stop and reset"
+  }[grade];
+
+  return {
+    grade,
+    tone: grade.toLowerCase(),
+    title,
+    lines: [
+      `${count} ${count === 1 ? "trade" : "trades"} today, ${formatPercent(avgDiscipline)} discipline.`,
+      `${lossCount} ${lossCount === 1 ? "loss" : "losses"}, ${mistakes.length} mistake ${mistakes.length === 1 ? "tag" : "tags"}.`,
+      majorMistakes.length
+        ? `Major rule break: ${majorMistakes[0]}.`
+        : !reviewSaved
+          ? "Save the daily review to complete journal discipline."
+          : weakSetupCount || lowConfidenceCount
+            ? "Review setup and confidence before the next entry."
+            : "Keep the same process for the next decision."
+    ]
+  };
+}
+
 function render() {
   const stats = analyze(trades);
   const analyticsTrades = getAnalyticsTrades();
+  updateThemeControl();
   renderSummary(stats);
   renderFilters();
   renderTable();
   renderAnalytics(analyze(analyticsTrades), analyticsTrades);
   renderStrategies();
   renderMt5Inbox();
+  renderChecklistRules();
 }
 
 function renderSummary(stats) {
@@ -2984,6 +4364,7 @@ function renderSummary(stats) {
 
 function renderFilters() {
   const setupFilter = $("#setupFilter");
+  updateHistoryFilterControls();
   const selected = setupFilter.value;
   const setups = [...new Set(trades.map((trade) => trade.setup).filter(Boolean))].sort();
   setupFilter.innerHTML = '<option value="all">All setups</option>';
@@ -2994,6 +4375,368 @@ function renderFilters() {
     setupFilter.appendChild(option);
   });
   setupFilter.value = setups.includes(selected) ? selected : "all";
+}
+
+function checklistInputs() {
+  return $$("[data-rule-group] input[type='checkbox'][data-rule-key]");
+}
+
+function checklistInputId(input) {
+  const group = input.closest("[data-rule-group]")?.dataset.ruleGroup || "";
+  return `${group}.${input.dataset.ruleKey || ""}`;
+}
+
+function ensureTodayChecklistState() {
+  settings.checklistState = normalizeChecklistState(settings.checklistState);
+  return settings.checklistState;
+}
+
+function checkedCountForGroup(group) {
+  const inputs = $$(`[data-rule-group="${group}"] input[type='checkbox'][data-rule-key]`);
+  const checked = inputs.filter((input) => input.checked).length;
+  return { checked, total: inputs.length };
+}
+
+function setDashboardCard(cardId, tone = "") {
+  const card = $(`#${cardId}`)?.closest("article");
+  if (!card) return;
+  card.classList.toggle("warning", tone === "warning");
+  card.classList.toggle("complete", tone === "complete");
+}
+
+const autoNoTradeRuleLabels = {
+  setupWeak: "Setup score below 60 found in today's journal.",
+  confidenceWeak: "Confidence below 60 found in today's journal.",
+  emotionDamaged: "Emotional mistake tag found today.",
+  instantReversal: "Opposite-direction reversal or instant reversal tag found today.",
+  dailyTradeLimit: "Two or more trades already recorded today.",
+  twoLosses: "Two losses already recorded today.",
+  goodProfitDone: "Good profit day detected; protect the day.",
+  noiseOnly: "M1/M5 noise reaction logged today.",
+  feelingOnly: "Entry reason shows feeling, FOMO, chasing, or no clear setup.",
+  slUnclear: "SL rule issue logged today.",
+  tpUnclear: "TP, R:R, or early-exit issue logged today."
+};
+
+function tradesForDate(date) {
+  const key = String(date || "").slice(0, 10);
+  return trades.filter((trade) => String(trade.date || "").slice(0, 10) === key);
+}
+
+function topFrequencyValue(values = []) {
+  const counts = new Map();
+  values
+    .map((value) => String(value || "").trim())
+    .filter((value) => value && value !== "None")
+    .forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, count]) => ({ name, count }))[0] || null;
+}
+
+function tradeTagsForReview(trade, key) {
+  const values = [];
+  if (trade?.[key]) values.push(trade[key]);
+  if (key === "positive" && Array.isArray(trade?.positiveTags)) values.push(...trade.positiveTags);
+  return values
+    .map((value) => String(value || "").trim())
+    .filter((value) => value && value !== "None");
+}
+
+function hasReviewTag(values = [], targets = []) {
+  const targetSet = new Set(targets.map((target) => String(target).toLowerCase()));
+  return values.some((value) => targetSet.has(String(value).toLowerCase()));
+}
+
+function hasOppositeReversalWithinMinutes(dayTrades = [], minutes = 30) {
+  const timedTrades = dayTrades
+    .map((trade) => ({
+      direction: String(trade.direction || "").toLowerCase(),
+      time: tradeOpenTime(trade)
+    }))
+    .filter((trade) => ["buy", "sell"].includes(trade.direction) && trade.time)
+    .map((trade) => {
+      const [hours, mins] = trade.time.split(":").map(Number);
+      return { ...trade, minuteOfDay: hours * 60 + mins };
+    })
+    .sort((a, b) => a.minuteOfDay - b.minuteOfDay);
+
+  return timedTrades.some((trade, index) => {
+    const previous = timedTrades[index - 1];
+    if (!previous) return false;
+    return trade.direction !== previous.direction && trade.minuteOfDay - previous.minuteOfDay <= minutes;
+  });
+}
+
+function todayNoTradeSignals(date = localDateKey()) {
+  const dayTrades = tradesForDate(date);
+  const mistakes = dayTrades.flatMap((trade) => tradeTagsForReview(trade, "mistake"));
+  const netPl = sum(dayTrades, (trade) => tradePl(trade));
+  const signals = {};
+
+  if (dayTrades.some((trade) => scoreValue(trade, "setupScore", 70) < 60)) signals.setupWeak = autoNoTradeRuleLabels.setupWeak;
+  if (dayTrades.some((trade) => scoreValue(trade, "confidence", 60) < 60)) signals.confidenceWeak = autoNoTradeRuleLabels.confidenceWeak;
+  if (hasReviewTag(mistakes, ["Revenge Trade", "FOMO", "Overtrade", "Instant Reversal", "Continued After 2 Losses", "Continued After Good Profit"])) {
+    signals.emotionDamaged = autoNoTradeRuleLabels.emotionDamaged;
+  }
+  if (hasReviewTag(mistakes, ["Instant Reversal"]) || hasOppositeReversalWithinMinutes(dayTrades)) {
+    signals.instantReversal = autoNoTradeRuleLabels.instantReversal;
+  }
+  if (dayTrades.length >= 2) signals.dailyTradeLimit = autoNoTradeRuleLabels.dailyTradeLimit;
+  if (dayTrades.filter((trade) => toNumber(trade.resultR) < 0).length >= 2) signals.twoLosses = autoNoTradeRuleLabels.twoLosses;
+  if (netPl > Math.max(toNumber(settings.startingBalance, 1000) * 0.02, 20)) signals.goodProfitDone = autoNoTradeRuleLabels.goodProfitDone;
+  if (hasReviewTag(mistakes, ["M5 Noise Reaction"])) signals.noiseOnly = autoNoTradeRuleLabels.noiseOnly;
+  if (hasReviewTag(mistakes, ["No Clear Setup", "Chasing Entry", "FOMO"])) signals.feelingOnly = autoNoTradeRuleLabels.feelingOnly;
+  if (hasReviewTag(mistakes, ["Moved SL Emotionally"])) signals.slUnclear = autoNoTradeRuleLabels.slUnclear;
+  if (hasReviewTag(mistakes, ["Poor R:R", "Early Exit"])) signals.tpUnclear = autoNoTradeRuleLabels.tpUnclear;
+
+  return signals;
+}
+
+function renderAutoNoTradeSignals(signals = {}) {
+  const container = $("#autoNoTradeSignals");
+  if (!container) return;
+  const entries = Object.entries(signals);
+  container.innerHTML = entries
+    .map(([key, label]) => `
+      <article>
+        <strong>${escapeHtml(key.replace(/([A-Z])/g, " $1").replace(/^./, (char) => char.toUpperCase()))}</strong>
+        <span>${escapeHtml(label)}</span>
+      </article>
+    `)
+    .join("");
+}
+
+function renderChecklistDashboard() {
+  const noTrade = checkedCountForGroup("noTrade");
+  const preEntry = checkedCountForGroup("preEntry");
+  const postTrade = checkedCountForGroup("postTrade");
+  const todayReview = dailyReviewByDate(localDateKey());
+  const autoSignalCount = Object.keys(todayNoTradeSignals()).length;
+
+  $("#noTradeProgress").textContent = `${noTrade.checked} / ${noTrade.total}`;
+  $("#noTradeStatus").textContent = autoSignalCount
+    ? `${autoSignalCount} auto warning${autoSignalCount === 1 ? "" : "s"} from journal`
+    : noTrade.checked
+      ? "Stand down until cleared"
+      : "Clear to evaluate";
+  setDashboardCard("noTradeProgress", noTrade.checked ? "warning" : "complete");
+
+  $("#preEntryProgress").textContent = `${preEntry.checked} / ${preEntry.total}`;
+  $("#preEntryStatus").textContent = preEntry.total && preEntry.checked === preEntry.total ? "Entry plan complete" : "Plan not complete";
+  setDashboardCard("preEntryProgress", preEntry.total && preEntry.checked === preEntry.total ? "complete" : "");
+
+  $("#postTradeProgress").textContent = `${postTrade.checked} / ${postTrade.total}`;
+  $("#postTradeStatus").textContent = postTrade.total && postTrade.checked === postTrade.total ? "Review complete" : "Review pending";
+  setDashboardCard("postTradeProgress", postTrade.total && postTrade.checked === postTrade.total ? "complete" : "");
+
+  $("#dailyReviewProgress").textContent = todayReview ? "Saved" : "Not saved";
+  $("#dailyReviewStatus").textContent = todayReview ? `Updated ${formatDate(todayReview.date)}` : "Record today before closing platform";
+  setDashboardCard("dailyReviewProgress", todayReview ? "complete" : "");
+}
+
+function dailyReviewByDate(date) {
+  const key = String(date || "").slice(0, 10);
+  return settings.dailyReviews.find((review) => review.date === key) || null;
+}
+
+function ruleForTomorrowFromSignals(signals = {}, topMistake = null) {
+  if (signals.twoLosses) return "After 2 losses, stop trading and only review screenshots.";
+  if (signals.dailyTradeLimit) return "Maximum 2 trades unless the next setup is A+ and fully checked.";
+  if (signals.emotionDamaged) return "No entry after FOMO, revenge, or frustration until a full reset is complete.";
+  if (signals.instantReversal) return "No opposite-direction reversal within 30 minutes without H1 and M15 confirmation.";
+  if (signals.setupWeak) return "Skip every setup below 60 setup score.";
+  if (signals.confidenceWeak) return "Do not enter unless confidence drivers are clearly explained before the trade.";
+  if (signals.goodProfitDone) return "After a good profit day, protect profit and trade smaller or stop.";
+  if (signals.noiseOnly) return "Ignore M1/M5 noise unless it aligns with the higher-timeframe plan.";
+  if (signals.tpUnclear) return "No trade without clean TP and acceptable R:R.";
+  if (signals.slUnclear) return "No trade without a logical SL location.";
+  if (topMistake) return `Remove ${topMistake.name} from tomorrow's execution.`;
+  return "Repeat the highest-quality setup only.";
+}
+
+function dailyReviewDefaults(date = localDateKey()) {
+  const dayTrades = tradesForDate(date);
+  const wins = dayTrades.filter((trade) => toNumber(trade.resultR) > 0).length;
+  const losses = dayTrades.filter((trade) => toNumber(trade.resultR) < 0).length;
+  const flat = Math.max(dayTrades.length - wins - losses, 0);
+  const netPl = roundNumber(sum(dayTrades, (trade) => toNumber(trade.actualPl)), 2);
+  const startingBalance = toNumber(settings.startingBalance, 1000);
+  const mistakes = dayTrades.flatMap((trade) => tradeTagsForReview(trade, "mistake"));
+  const positives = dayTrades.flatMap((trade) => tradeTagsForReview(trade, "positive"));
+  const topMistake = topFrequencyValue(mistakes);
+  const topPositive = topFrequencyValue(positives);
+  const signals = todayNoTradeSignals(date);
+  const signalList = Object.values(signals);
+  const majorRuleIssue = hasReviewTag(mistakes, [
+    "Revenge Trade",
+    "FOMO",
+    "Overtrade",
+    "Instant Reversal",
+    "Moved SL Emotionally",
+    "Continued After 2 Losses",
+    "Continued After Good Profit",
+    "No Clear Setup"
+  ]);
+
+  return normalizeDailyReview({
+    date,
+    startingBalance: startingBalance ? String(startingBalance) : "",
+    endingBalance: dayTrades.length ? String(roundNumber(startingBalance + netPl, 2)) : "",
+    tradesTaken: dayTrades.length ? String(dayTrades.length) : "",
+    winLoss: dayTrades.length ? `${wins}W / ${losses}L${flat ? ` / ${flat}BE` : ""}` : "",
+    netPl: dayTrades.length ? currencyFormatter.format(netPl) : "",
+    followedPlan: majorRuleIssue ? "No" : signalList.length ? "Partially" : "Yes",
+    reversedEmotionally: hasReviewTag(mistakes, ["Instant Reversal", "Revenge Trade"]) ? "Yes" : "No",
+    closedEarly: hasReviewTag(mistakes, ["Early Exit"]) ? "Yes" : "No",
+    movedSl: hasReviewTag(mistakes, ["Moved SL Emotionally"]) ? "Yes" : "No",
+    overtraded: dayTrades.length > 2 || hasReviewTag(mistakes, ["Overtrade"]) ? "Yes" : "No",
+    biggestEmotion: topMistake?.name || (signalList.length ? "Rule pressure" : "Calm"),
+    bestBehavior: topPositive?.name || (dayTrades.length ? "Journal completed and risk reviewed" : "Stayed flat"),
+    worstBehavior: topMistake?.name || signalList[0] || "None recorded",
+    mainLesson: signalList[0] || (dayTrades.length ? "Process stayed clean; keep executing the same plan." : "No trade can be a valid trading decision."),
+    ruleForTomorrow: ruleForTomorrowFromSignals(signals, topMistake)
+  });
+}
+
+function fillDailyReviewForm(date = localDateKey()) {
+  const form = $("#dailyReviewForm");
+  if (!form) return;
+  const review = dailyReviewByDate(date) || dailyReviewDefaults(date);
+  Object.entries(review).forEach(([key, value]) => {
+    if (form.elements[key]) form.elements[key].value = value;
+  });
+}
+
+function fillDailyReviewFromJournal(date = localDateKey()) {
+  const form = $("#dailyReviewForm");
+  if (!form) return;
+  const review = dailyReviewDefaults(date);
+  Object.entries(review).forEach(([key, value]) => {
+    if (form.elements[key]) form.elements[key].value = value;
+  });
+  renderChecklistDashboard();
+}
+
+function readDailyReviewForm() {
+  const form = $("#dailyReviewForm");
+  const data = new FormData(form);
+  return normalizeDailyReview({
+    date: data.get("date") || localDateKey(),
+    startingBalance: data.get("startingBalance"),
+    endingBalance: data.get("endingBalance"),
+    tradesTaken: data.get("tradesTaken"),
+    winLoss: data.get("winLoss"),
+    netPl: data.get("netPl"),
+    screenshots: data.get("screenshots"),
+    followedPlan: data.get("followedPlan"),
+    reversedEmotionally: data.get("reversedEmotionally"),
+    closedEarly: data.get("closedEarly"),
+    movedSl: data.get("movedSl"),
+    overtraded: data.get("overtraded"),
+    biggestEmotion: data.get("biggestEmotion"),
+    bestBehavior: data.get("bestBehavior"),
+    worstBehavior: data.get("worstBehavior"),
+    mainLesson: data.get("mainLesson"),
+    ruleForTomorrow: data.get("ruleForTomorrow"),
+    updatedAt: new Date().toISOString()
+  });
+}
+
+function renderDailyReviewHistory() {
+  const container = $("#dailyReviewHistory");
+  if (!container) return;
+  const reviews = normalizeDailyReviews(settings.dailyReviews).slice(0, 6);
+  if (!reviews.length) {
+    container.innerHTML = '<p class="rule-copy">No daily reviews saved yet.</p>';
+    return;
+  }
+  container.innerHTML = reviews
+    .map((review) => `
+      <article class="daily-review-item">
+        <div>
+          <strong>${escapeHtml(formatDate(review.date))}</strong>
+          <p>${escapeHtml(review.tradesTaken || "0")} trades, ${escapeHtml(review.winLoss || "No W/L noted")}, ${escapeHtml(review.netPl || "$0.00")}</p>
+          <p>${escapeHtml(review.ruleForTomorrow || "No rule for tomorrow recorded.")}</p>
+        </div>
+        <button class="mini-button text-mini" type="button" data-daily-review-date="${escapeHtml(review.date)}">Load</button>
+      </article>
+    `)
+    .join("");
+}
+
+function renderChecklistRules() {
+  if (!$("#checklistView")) return;
+  const state = ensureTodayChecklistState();
+  const autoSignals = todayNoTradeSignals();
+  checklistInputs().forEach((input) => {
+    const group = input.closest("[data-rule-group]")?.dataset.ruleGroup || "";
+    const ruleKey = input.dataset.ruleKey || "";
+    const autoTriggered = group === "noTrade" && Boolean(autoSignals[ruleKey]);
+    input.checked = Boolean(state.checks[checklistInputId(input)]) || autoTriggered;
+    input.dataset.autoTriggered = autoTriggered ? "true" : "";
+    input.title = autoTriggered ? autoSignals[ruleKey] : "";
+    input.closest(".check-card")?.classList.toggle("auto-triggered", autoTriggered);
+  });
+  renderAutoNoTradeSignals(autoSignals);
+  fillDailyReviewForm($("#dailyReviewDate")?.value || localDateKey());
+  renderDailyReviewHistory();
+  renderChecklistDashboard();
+}
+
+function updateChecklistInput(input) {
+  const state = ensureTodayChecklistState();
+  if (input.dataset.autoTriggered === "true" && !input.checked) {
+    input.checked = true;
+    showToast("Auto rule is active from today's journal.");
+  }
+  state.checks[checklistInputId(input)] = input.checked;
+  saveSettings();
+  renderChecklistDashboard();
+}
+
+function saveDailyReviewFromForm() {
+  const review = readDailyReviewForm();
+  const index = settings.dailyReviews.findIndex((item) => item.date === review.date);
+  if (index >= 0) settings.dailyReviews[index] = review;
+  else settings.dailyReviews.push(review);
+  settings.dailyReviews = normalizeDailyReviews(settings.dailyReviews);
+  saveSettings();
+  renderDailyReviewHistory();
+  renderChecklistDashboard();
+  showToast("Daily review saved.");
+}
+
+function exportDailyReviewsCsv() {
+  const reviews = normalizeDailyReviews(settings.dailyReviews);
+  if (!reviews.length) {
+    showToast("Save a daily review before exporting.");
+    return;
+  }
+  const headers = [
+    "date",
+    "startingBalance",
+    "endingBalance",
+    "tradesTaken",
+    "winLoss",
+    "netPl",
+    "screenshots",
+    "followedPlan",
+    "reversedEmotionally",
+    "closedEarly",
+    "movedSl",
+    "overtraded",
+    "biggestEmotion",
+    "bestBehavior",
+    "worstBehavior",
+    "mainLesson",
+    "ruleForTomorrow",
+    "updatedAt"
+  ];
+  const rows = reviews.map((review) =>
+    headers.map((header) => `"${String(review[header] ?? "").replace(/"/g, '""')}"`).join(",")
+  );
+  downloadFile("fx-daily-reviews.csv", [headers.join(","), ...rows].join("\n"), "text/csv");
 }
 
 function normalizeTimeValue(value) {
@@ -3133,12 +4876,186 @@ function renderAnalytics(stats, sourceTrades = getAnalyticsTrades()) {
   }
   drawEquityChart(equitySeries, equityPeriod, equityChartMetric);
   renderInsights(stats, sourceTrades);
+  renderDailyDisciplineGrade();
+  renderDevelopmentAnalytics(sourceTrades);
   renderLeaderboard("#setupLeaderboard", stats.setupStats, "setup");
   renderLeaderboard("#sessionBreakdown", stats.sessionStats, "session");
   renderLeaderboard("#mistakeBreakdown", stats.mistakeStats, "mistake");
   renderBestProfile(stats);
   renderPerformanceCharts(sourceTrades);
   renderReportAnalysis(sourceTrades);
+}
+
+function renderDailyDisciplineGrade() {
+  const container = $("#dailyDisciplineGrade");
+  if (!container) return;
+  const report = dailyDisciplineReport(trades);
+  container.className = `discipline-grade-card grade-${report.tone}`;
+  container.innerHTML = `
+    <div class="grade-mark">${escapeHtml(report.grade)}</div>
+    <div>
+      <strong>${escapeHtml(report.title)}</strong>
+      ${report.lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+    </div>
+  `;
+}
+
+function averageScoreForList(list, key, fallback = 0) {
+  return list.length ? sum(list, (trade) => scoreValue(trade, key, fallback)) / list.length : 0;
+}
+
+function scoreTone(value, good = 70, caution = 55) {
+  if (value >= good) return "positive";
+  if (value >= caution) return "caution";
+  return "negative";
+}
+
+function scoreSummaryLabel(key) {
+  return {
+    setupScore: "Setup quality",
+    confidence: "Confidence",
+    discipline: "Discipline",
+    alignment: "Aligned trades"
+  }[key] || key;
+}
+
+function setupTypeForTrade(trade) {
+  return String(trade.setupType || setupTypeBySetup[trade.setup] || "Custom / Other").trim() || "Custom / Other";
+}
+
+function scoreStatsForItems(name, items) {
+  const wins = items.filter((trade) => toNumber(trade.resultR) > 0).length;
+  const losses = items.filter((trade) => toNumber(trade.resultR) < 0).length;
+  const resolved = wins + losses;
+  const netR = sum(items, (trade) => toNumber(trade.resultR));
+  return {
+    name,
+    count: items.length,
+    netR,
+    avgR: items.length ? netR / items.length : 0,
+    winRate: resolved ? (wins / resolved) * 100 : 0,
+    avgSetup: averageScoreForList(items, "setupScore", 70),
+    avgConfidence: averageScoreForList(items, "confidence", 60),
+    avgDiscipline: averageScoreForList(items, "discipline", 70),
+    items
+  };
+}
+
+function setupTypeAnalytics(list) {
+  return Object.entries(groupBy(list, setupTypeForTrade))
+    .map(([name, items]) => scoreStatsForItems(name, items))
+    .sort((a, b) => b.avgR - a.avgR || b.count - a.count);
+}
+
+function executionBucketForTrade(trade) {
+  const setupOk = scoreValue(trade, "setupScore", 70) >= 70;
+  const confidenceOk = scoreValue(trade, "confidence", 60) >= 60;
+  const disciplineOk = scoreValue(trade, "discipline", 70) >= 70;
+  if (setupOk && confidenceOk && disciplineOk) return "Full alignment";
+  if (setupOk && confidenceOk && !disciplineOk) return "Execution leak";
+  if (setupOk && !confidenceOk && disciplineOk) return "Low-conviction control";
+  if (!setupOk && disciplineOk) return "Disciplined weak setup";
+  return "High-risk behavior";
+}
+
+function executionMatrixAnalytics(list) {
+  const order = ["Full alignment", "Execution leak", "Low-conviction control", "Disciplined weak setup", "High-risk behavior"];
+  return Object.entries(groupBy(list, executionBucketForTrade))
+    .map(([name, items]) => scoreStatsForItems(name, items))
+    .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+}
+
+function positiveBehaviorAnalytics(list) {
+  const groups = {};
+  list.forEach((trade) => {
+    tradeTagsForReview(trade, "positive").forEach((tag) => {
+      if (!groups[tag]) groups[tag] = [];
+      groups[tag].push(trade);
+    });
+  });
+  return Object.entries(groups)
+    .map(([name, items]) => scoreStatsForItems(name, items))
+    .sort((a, b) => b.avgR - a.avgR || b.count - a.count);
+}
+
+function renderScoreSnapshot(list) {
+  const container = $("#scoreSnapshot");
+  if (!container) return;
+  const count = list.length;
+  const avgSetup = averageScoreForList(list, "setupScore", 70);
+  const avgConfidence = averageScoreForList(list, "confidence", 60);
+  const avgDiscipline = averageScoreForList(list, "discipline", 70);
+  const alignedCount = list.filter((trade) =>
+    scoreValue(trade, "setupScore", 70) >= 70 &&
+    scoreValue(trade, "confidence", 60) >= 60 &&
+    scoreValue(trade, "discipline", 70) >= 70
+  ).length;
+  const alignment = count ? (alignedCount / count) * 100 : 0;
+  const rows = [
+    { key: "setupScore", value: avgSetup, note: count ? "Entry idea quality" : "Record trades to score setup quality" },
+    { key: "confidence", value: avgConfidence, note: count ? "Pre-entry conviction" : "Confidence appears after scored trades" },
+    { key: "discipline", value: avgDiscipline, note: count ? "Execution rule control" : "Discipline appears after scored trades" },
+    { key: "alignment", value: alignment, note: `${alignedCount}/${count} trades met score gates` }
+  ];
+
+  container.innerHTML = rows
+    .map((row) => {
+      const value = Math.max(0, Math.min(row.value || 0, 100));
+      const tone = scoreTone(value, row.key === "alignment" ? 55 : 70, row.key === "alignment" ? 35 : 55);
+      return `
+        <article class="score-snapshot-card score-${tone}">
+          <span>${escapeHtml(scoreSummaryLabel(row.key))}</span>
+          <strong>${formatPercent(value)}</strong>
+          <div class="score-meter"><div style="width: ${value}%;"></div></div>
+          <p>${escapeHtml(row.note)}</p>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderScoreLeaderboard(selector, rows, emptyLabel, options = {}) {
+  const container = $(selector);
+  if (!container) return;
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty-state visible">No ${escapeHtml(emptyLabel)} data.</div>`;
+    return;
+  }
+
+  const topAbs = Math.max(...rows.map((row) => Math.abs(row.netR)), 1);
+  container.innerHTML = rows
+    .slice(0, options.limit || 5)
+    .map((row) => {
+      const width = Math.min((Math.abs(row.netR) / topAbs) * 100, 100);
+      const tone = row.netR >= 0 ? "positive" : "negative";
+      const details = options.details
+        ? options.details(row)
+        : `${row.count} trades, ${formatPercent(row.winRate)} win, ${formatR(row.avgR)} avg`;
+      return `
+        <article class="score-row score-${tone}">
+          <header>
+            <strong>${escapeHtml(row.name)}</strong>
+            <span>${formatR(row.netR)}</span>
+          </header>
+          <p>${escapeHtml(details)}</p>
+          <div class="leader-track"><div class="leader-fill" style="width: ${width}%;"></div></div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderDevelopmentAnalytics(sourceTrades = getAnalyticsTrades()) {
+  renderScoreSnapshot(sourceTrades);
+  renderScoreLeaderboard("#setupTypeEdge", setupTypeAnalytics(sourceTrades), "setup type", {
+    details: (row) => `${row.count} trades, setup ${formatPercent(row.avgSetup)}, discipline ${formatPercent(row.avgDiscipline)}, ${formatR(row.avgR)} avg`
+  });
+  renderScoreLeaderboard("#executionMatrix", executionMatrixAnalytics(sourceTrades), "execution matrix", {
+    details: (row) => `${row.count} trades, confidence ${formatPercent(row.avgConfidence)}, discipline ${formatPercent(row.avgDiscipline)}, ${formatR(row.avgR)} avg`
+  });
+  renderScoreLeaderboard("#positiveBreakdown", positiveBehaviorAnalytics(sourceTrades), "positive behavior", {
+    details: (row) => `${row.count} tags, ${formatPercent(row.winRate)} win, discipline ${formatPercent(row.avgDiscipline)}`
+  });
 }
 
 function rerenderAnalyticsSoon(delay = 120) {
@@ -3155,7 +5072,8 @@ function getCanvasDisplaySize(canvas, fallbackHeight) {
   const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
   const fallbackWidth = Math.min(Math.max(viewportWidth - 48, 280), 760);
   const cssHeight = parseFloat(getComputedStyle(canvas).height);
-  const width = Math.max(rect.width || 0, wrapRect?.width || 0, fallbackWidth);
+  const measuredWidth = rect.width || canvas.clientWidth || wrapRect?.width || 0;
+  const width = measuredWidth > 0 ? measuredWidth : fallbackWidth;
   const height = Math.max(cssHeight || fallbackHeight, fallbackHeight * 0.85);
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   return { width, height, dpr };
@@ -3177,9 +5095,31 @@ function isCoarseChartInput(event) {
   return event?.pointerType === "touch" || event?.type?.startsWith("touch") || window.matchMedia?.("(pointer: coarse)")?.matches;
 }
 
-function setChartReadout(chartId, title, lines = []) {
+const chartToneClasses = ["tone-positive", "tone-negative", "tone-count"];
+
+function setChartTone(element, tone = "") {
+  if (!element) return;
+  chartToneClasses.forEach((className) => element.classList.remove(className));
+  if (tone) element.classList.add(`tone-${tone}`);
+}
+
+function chartToneForValue(value, options = {}) {
+  if (options.colorMode === "count") return "count";
+  const numericValue = toNumber(value);
+  if (numericValue < 0) return "negative";
+  if (numericValue > 0) return "positive";
+  return "";
+}
+
+function equityToneForPoint(point) {
+  const periodValue = equityChartState.metric === "balance" ? point.periodPl : point.periodR;
+  return chartToneForValue(periodValue);
+}
+
+function setChartReadout(chartId, title, lines = [], tone = "") {
   const readout = $(`#${chartId}Readout`);
   if (!readout) return;
+  setChartTone(readout, tone);
   readout.innerHTML = `
     <strong>${escapeHtml(title)}</strong>
     ${lines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
@@ -3188,7 +5128,10 @@ function setChartReadout(chartId, title, lines = []) {
 
 function resetChartReadout(chartId, message) {
   const readout = $(`#${chartId}Readout`);
-  if (readout) readout.textContent = message;
+  if (readout) {
+    setChartTone(readout);
+    readout.textContent = message;
+  }
 }
 
 function scheduleTouchTooltipHide() {
@@ -3201,6 +5144,26 @@ function scheduleTouchTooltipHide() {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function cssVar(name, fallback = "") {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+function chartPalette() {
+  return {
+    bg: cssVar("--chart-canvas-bg", "#fffefb"),
+    grid: cssVar("--chart-grid", "#d9ded7"),
+    text: cssVar("--muted", "#69736f"),
+    ink: cssVar("--ink", "#1f2826"),
+    teal: cssVar("--teal", "#0f766e"),
+    red: cssVar("--red", "#be123c"),
+    blue: cssVar("--blue", "#2563eb"),
+    fill: cssVar("--chart-fill", "rgba(15, 118, 110, 0.12)"),
+    redFill: cssVar("--chart-negative-fill", "rgba(190, 18, 60, 0.12)"),
+    labelOutline: cssVar("--chart-label-outline", "rgba(255, 255, 255, 0.92)"),
+    labelShadow: cssVar("--chart-label-shadow", "rgba(31, 40, 38, 0.2)")
+  };
 }
 
 function positionFloatingTooltip(tooltip, clientX, clientY) {
@@ -3293,13 +5256,14 @@ function drawModernValueLabel(context, text, x, y, options = {}) {
 
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.lineWidth = options.outlineWidth ?? 6;
-  context.strokeStyle = options.outline || "rgba(255, 255, 255, 0.9)";
-  context.shadowColor = options.shadowColor || "rgba(31, 40, 38, 0.26)";
-  context.shadowBlur = options.shadowBlur ?? 6;
-  context.shadowOffsetY = options.shadowOffsetY ?? 1.5;
+  context.lineWidth = options.outlineWidth ?? 4;
+  const palette = chartPalette();
+  context.strokeStyle = options.outline || palette.labelOutline;
+  context.shadowColor = options.shadowColor || palette.labelShadow;
+  context.shadowBlur = options.shadowBlur ?? 4;
+  context.shadowOffsetY = options.shadowOffsetY ?? 1;
   context.strokeText(label, safeX, y);
-  context.fillStyle = options.color || "#1f2826";
+  context.fillStyle = options.color || palette.ink;
   context.fillText(label, safeX, y);
 
   context.textAlign = previousAlign;
@@ -3313,12 +5277,13 @@ function drawModernValueLabel(context, text, x, y, options = {}) {
 }
 
 function drawAxisText(context, text, x, y, options = {}) {
+  const palette = chartPalette();
   drawModernValueLabel(context, text, x, y, {
-    color: options.color || "#1f2826",
-    outline: options.outline || "rgba(255, 255, 255, 0.96)",
-    outlineWidth: options.outlineWidth || 5,
-    shadowBlur: options.shadowBlur || 2,
-    shadowColor: options.shadowColor || "rgba(31, 40, 38, 0.14)",
+    color: options.color || palette.ink,
+    outline: options.outline || palette.labelOutline,
+    outlineWidth: options.outlineWidth || 4,
+    shadowBlur: options.shadowBlur || 1.5,
+    shadowColor: options.shadowColor || palette.labelShadow,
     minX: options.minX,
     maxX: options.maxX
   });
@@ -3404,8 +5369,10 @@ function renderEquityDomLabels(canvas, points, labels, dimensions) {
   const scaledY = (value) => value * scale.y;
   const xMax = canvas.clientWidth - 20;
 
-  appendChartLabel(layer, formatEquityChartValue(yMax, metric), clamp(scaledX(padding.left), 20, xMax), scaledY(padding.top + 4), "axis");
-  appendChartLabel(layer, formatEquityChartValue(yMin, metric), clamp(scaledX(padding.left), 20, xMax), scaledY(height - padding.bottom + 2), "axis");
+  const yMid = (yMax + yMin) / 2;
+  appendChartLabel(layer, formatEquityChartValue(yMax, metric), clamp(scaledX(padding.left), 20, xMax), scaledY(padding.top + 4), "axis edge-left");
+  appendChartLabel(layer, formatEquityChartValue(yMid, metric), clamp(scaledX(padding.left), 20, xMax), scaledY((height - padding.bottom + padding.top) / 2), "axis edge-left muted-axis");
+  appendChartLabel(layer, formatEquityChartValue(yMin, metric), clamp(scaledX(padding.left), 20, xMax), scaledY(height - padding.bottom + 2), "axis edge-left");
 
   const indexes = compact
     ? [...new Set([0, points.length - 1])]
@@ -3414,24 +5381,37 @@ function renderEquityDomLabels(canvas, points, labels, dimensions) {
   indexes.forEach((index) => {
     const point = points[index];
     const text = compact ? compactChartLabel(labels[index]) : labels[index] || "";
-    appendChartLabel(layer, text, clamp(scaledX(point.x), 24, xMax), scaledY(height - 14), "axis");
+    const edgeClass = index === 0 ? "edge-left" : index === points.length - 1 ? "edge-right" : "";
+    appendChartLabel(layer, text, clamp(scaledX(point.x), 16, canvas.clientWidth - 16), scaledY(height - 14), `axis ${edgeClass}`.trim());
   });
+}
+
+function chartLabelIndexes(count, compact, mode = "") {
+  if (count <= 0) return [];
+  if (mode === "three" || compact || count > 8) {
+    return [...new Set([0, Math.floor((count - 1) / 2), count - 1])];
+  }
+  return Array.from({ length: count }, (_, index) => index);
 }
 
 function renderBarDomLabels(canvas, bars, options, dimensions) {
   const layer = ensureChartLabelLayer(canvas);
   if (!layer) return;
-  const { width, height, padding, compact } = dimensions;
+  const { width, height, padding, compact, type = "bar" } = dimensions;
   const scale = chartPixelScales(canvas, width, height);
   const maxX = canvas.clientWidth - 20;
-  const shouldShowAll = !compact || bars.length <= 8;
+  const labelIndexes = new Set(chartLabelIndexes(bars.length, compact, options.xLabelMode));
+  const valueIndexes = new Set(options.xLabelMode === "three" ? chartLabelIndexes(bars.length, compact, "three") : bars.map((_, index) => index));
+  const shouldShowValues = !compact || bars.length <= 8 || options.xLabelMode === "three";
+  const centerAxisLabels = type === "bar";
 
   bars.forEach((bar, index) => {
-    const x = clamp((bar.x + bar.width / 2) * scale.x, 20, maxX);
+    const centerX = bar.centerX ?? (bar.x + bar.width / 2);
+    const x = clamp(centerX * scale.x, 16, canvas.clientWidth - 16);
     const value = toNumber(bar.value);
     const isCount = options.colorMode === "count";
 
-    if (value !== 0 && shouldShowAll) {
+    if (value !== 0 && shouldShowValues && valueIndexes.has(index)) {
       const valueText = options.formatter ? options.formatter(value) : numberFormatter.format(value);
       const rawValueY = value >= 0
         ? Math.max(bar.y - 12, 22)
@@ -3445,9 +5425,10 @@ function renderBarDomLabels(canvas, bars, options, dimensions) {
       appendChartLabel(layer, valueText, x, rawValueY * scale.y, valueClass);
     }
 
-    if (shouldShowAll) {
+    if (labelIndexes.has(index)) {
       const text = compact ? compactChartLabel(bar.label) : String(bar.label).length > 10 ? `${String(bar.label).slice(0, 9)}...` : String(bar.label);
-      appendChartLabel(layer, text, x, (height - 30) * scale.y, "axis");
+      const edgeClass = centerAxisLabels ? "" : index === 0 ? "edge-left" : index === bars.length - 1 ? "edge-right" : "";
+      appendChartLabel(layer, text, x, (height - 30) * scale.y, `axis ${edgeClass}`.trim());
     }
   });
 }
@@ -3496,7 +5477,7 @@ function installBarHitZones(canvas, bars, options) {
   const defaultBar = bars.reduce((best, bar) => (Math.abs(bar.value) > Math.abs(best?.value || 0) ? bar : best), bars[0] || null);
   if (defaultBar) {
     const summary = barSummary(defaultBar, options);
-    setChartReadout(canvas.id, defaultBar.label, summary.lines);
+    setChartReadout(canvas.id, defaultBar.label, summary.lines, chartToneForValue(defaultBar.value, options));
   }
 }
 
@@ -3505,7 +5486,7 @@ function installEquityHitZones(canvas, points) {
   if (!layer) return;
   points.forEach((point) => {
     const size = 56;
-    const zone = {
+    const zone = point.zone || {
       left: Math.max(point.x - size / 2, 0),
       top: Math.max(point.y - size / 2, 0),
       width: size,
@@ -3520,7 +5501,7 @@ function installEquityHitZones(canvas, points) {
   const lastPoint = points[points.length - 1];
   if (lastPoint) {
     const summary = equitySummary(lastPoint);
-    setChartReadout("equityChart", lastPoint.label, summary.lines);
+    setChartReadout("equityChart", lastPoint.label, summary.lines, equityToneForPoint(lastPoint));
   }
 }
 
@@ -3534,14 +5515,15 @@ function drawEquityChart(equity, period = "day", metric = "r") {
   canvas.height = height * dpr;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
   context.clearRect(0, 0, width, height);
+  const palette = chartPalette();
 
-  context.fillStyle = "#fffefb";
+  context.fillStyle = palette.bg;
   context.fillRect(0, 0, width, height);
 
   const compact = isCompactChart(width);
   const padding = compact
-    ? { top: 30, right: 16, bottom: 50, left: 36 }
-    : { top: 24, right: 24, bottom: 34, left: 46 };
+    ? { top: 42, right: 52, bottom: 72, left: 44 }
+    : { top: 38, right: 74, bottom: 62, left: 60 };
   const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
   const chartData = [
     { label: "Start", value: metric === "balance" ? startingBalance : 0, periodR: 0, periodPl: 0, count: 0, key: "" },
@@ -3558,7 +5540,7 @@ function drawEquityChart(equity, period = "day", metric = "r") {
     clearChartHitLayer("equityChart");
     clearChartLabelLayer("equityChart");
     hideEquityTooltip();
-    context.fillStyle = "#69736f";
+    context.fillStyle = palette.text;
     context.font = "14px Segoe UI, sans-serif";
     context.fillText(metric === "balance" ? "No balance curve yet" : "No equity curve yet", padding.left, height / 2);
     drawChartFrame(context, width, height, padding);
@@ -3579,9 +5561,26 @@ function drawEquityChart(equity, period = "day", metric = "r") {
     return { ...chartData[index], x, y, value };
   });
 
+  points.forEach((point, index) => {
+    const prev = points[index - 1];
+    const next = points[index + 1];
+    const slotLeft = index === 0 ? padding.left : (prev.x + point.x) / 2;
+    const slotRight = index === points.length - 1 ? width - padding.right : (point.x + next.x) / 2;
+    point.slotLeft = slotLeft;
+    point.slotRight = slotRight;
+    point.zone = {
+      left: Math.max(slotLeft, 0),
+      top: Math.max(padding.top - 20, 0),
+      width: Math.max(slotRight - slotLeft, 44),
+      height: chartHeight + padding.bottom + 18
+    };
+  });
+
   drawChartFrame(context, width, height, padding);
 
-  context.strokeStyle = "#d9ded7";
+  context.save();
+  context.globalAlpha = 0.62;
+  context.strokeStyle = palette.grid;
   context.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) {
     const y = padding.top + (chartHeight * i) / 4;
@@ -3590,6 +5589,7 @@ function drawEquityChart(equity, period = "day", metric = "r") {
     context.lineTo(width - padding.right, y);
     context.stroke();
   }
+  context.restore();
 
   context.beginPath();
   points.forEach((point, index) => {
@@ -3599,7 +5599,7 @@ function drawEquityChart(equity, period = "day", metric = "r") {
   context.lineTo(points[points.length - 1].x, height - padding.bottom);
   context.lineTo(points[0].x, height - padding.bottom);
   context.closePath();
-  context.fillStyle = "rgba(15, 118, 110, 0.12)";
+  context.fillStyle = palette.fill;
   context.fill();
 
   context.beginPath();
@@ -3607,14 +5607,14 @@ function drawEquityChart(equity, period = "day", metric = "r") {
     if (index === 0) context.moveTo(point.x, point.y);
     else context.lineTo(point.x, point.y);
   });
-  context.strokeStyle = "#0f766e";
+  context.strokeStyle = palette.teal;
   context.lineWidth = compact ? 4 : 3;
   context.stroke();
 
   points.forEach((point) => {
     context.beginPath();
     context.arc(point.x, point.y, compact ? 5 : 3, 0, Math.PI * 2);
-    context.fillStyle = point.value >= 0 ? "#0f766e" : "#be123c";
+    context.fillStyle = point.value >= 0 ? palette.teal : palette.red;
     context.fill();
   });
 
@@ -3624,9 +5624,12 @@ function drawEquityChart(equity, period = "day", metric = "r") {
 }
 
 function drawChartFrame(context, width, height, padding) {
-  context.strokeStyle = "#d9ded7";
+  context.save();
+  context.globalAlpha = 0.7;
+  context.strokeStyle = chartPalette().grid;
   context.lineWidth = 1;
   context.strokeRect(padding.left, padding.top, width - padding.left - padding.right, height - padding.top - padding.bottom);
+  context.restore();
 }
 
 function drawChartLabels(context, points, labels, height, width = 320) {
@@ -3699,10 +5702,11 @@ function rDistributionData(list) {
 }
 
 function renderPerformanceCharts(sourceTrades = getAnalyticsTrades()) {
+  updatePeriodPlPeriodControls();
   const report = buildReportStats(sourceTrades);
-  const periodData = cashSeriesForPeriod(sourceTrades, equityPeriod).map((item) => ({
+  const periodData = cashSeriesForPeriod(sourceTrades, periodPlPeriod).map((item) => ({
     ...item,
-    detail: `${item.count} orders in this ${equityPeriod}`
+    detail: `${item.count} ${item.count === 1 ? "order" : "orders"} in this ${periodPlPeriod}`
   }));
   const pairData = report.symbols.slice(0, 8).map((item) => ({
     label: item.name,
@@ -3717,11 +5721,12 @@ function renderPerformanceCharts(sourceTrades = getAnalyticsTrades()) {
     detail: `${item.count} orders, ${formatPercent(item.winRate)} win, ${currencyFormatter.format(item.avgPl)} avg`
   }));
 
-  drawBarChart("periodPlChart", periodData, {
+  drawCurveChart("periodPlChart", periodData, {
     formatter: (value) => currencyFormatter.format(value),
     empty: "No period P/L yet",
     valueLabel: "Net P/L",
-    prompt: "Tap a bar to see period P/L details."
+    xLabelMode: "three",
+    prompt: "Tap or drag the curve to see period P/L details."
   });
   drawBarChart("pairPlChart", pairData, {
     formatter: (value) => currencyFormatter.format(value),
@@ -3744,19 +5749,19 @@ function renderPerformanceCharts(sourceTrades = getAnalyticsTrades()) {
   });
 }
 
-function drawBarChart(canvasId, data, options = {}) {
+function drawCurveChart(canvasId, data, options = {}) {
   const canvas = $(`#${canvasId}`);
   if (!canvas) return;
   hideBarChartTooltip();
-  resetChartReadout(canvasId, options.prompt || "Tap a bar to see chart details.");
+  resetChartReadout(canvasId, options.prompt || "Tap or drag the curve to see chart details.");
   const context = canvas.getContext("2d");
-  const fallbackHeight = Number(canvas.getAttribute("height")) || 260;
-  const { width, height, dpr } = getCanvasDisplaySize(canvas, fallbackHeight);
+  const { width, height, dpr } = getCanvasDisplaySize(canvas, 320);
   canvas.width = width * dpr;
   canvas.height = height * dpr;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
   context.clearRect(0, 0, width, height);
-  context.fillStyle = "#fffefb";
+  const palette = chartPalette();
+  context.fillStyle = palette.bg;
   context.fillRect(0, 0, width, height);
 
   const cleanData = data.filter((item) => item && item.label);
@@ -3765,29 +5770,219 @@ function drawBarChart(canvasId, data, options = {}) {
     clearChartHitLayer(canvasId);
     clearChartLabelLayer(canvasId);
     resetChartReadout(canvasId, options.empty || "No data yet");
-    context.fillStyle = "#69736f";
+    context.fillStyle = palette.text;
     context.font = "700 15px Segoe UI, sans-serif";
     context.fillText(options.empty || "No data yet", 18, height / 2);
+    drawChartFrame(context, width, height, { top: 48, right: 40, bottom: 62, left: 48 });
     return;
   }
 
   const compact = isCompactChart(width);
   const padding = compact
-    ? { top: 42, right: 12, bottom: 84, left: 34 }
-    : { top: 24, right: 18, bottom: 54, left: 54 };
+    ? { top: 52, right: 46, bottom: 102, left: 46 }
+    : { top: 48, right: 66, bottom: 82, left: 68 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
   const values = cleanData.map((item) => toNumber(item.value));
   const minValue = Math.min(0, ...values);
   const maxValue = Math.max(0, ...values);
   const range = Math.max(maxValue - minValue, 1);
+  const yMin = minValue - range * 0.12;
+  const yMax = maxValue + range * 0.12;
+  const yRange = Math.max(yMax - yMin, 1);
+  const xForIndex = (index) => cleanData.length === 1
+    ? padding.left + chartWidth / 2
+    : padding.left + (chartWidth * index) / (cleanData.length - 1);
+  const yForValue = (value) => padding.top + chartHeight - ((value - yMin) / yRange) * chartHeight;
+  const baseline = yForValue(0);
+
+  drawChartFrame(context, width, height, padding);
+
+  context.save();
+  context.globalAlpha = 0.62;
+  context.strokeStyle = palette.grid;
+  context.lineWidth = 1;
+  for (let index = 0; index <= 4; index += 1) {
+    const y = padding.top + (chartHeight * index) / 4;
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(width - padding.right, y);
+    context.stroke();
+  }
+  context.restore();
+
+  context.beginPath();
+  context.moveTo(padding.left, baseline);
+  context.lineTo(width - padding.right, baseline);
+  context.stroke();
+
+  const points = cleanData.map((item, index) => ({
+    x: xForIndex(index),
+    y: yForValue(toNumber(item.value)),
+    label: item.label,
+    value: toNumber(item.value),
+    count: item.count ?? 0,
+    detail: item.detail || "",
+    raw: item,
+    index
+  }));
+
+  const curveSegments = [];
+  const splitAtZero = (start, end) => {
+    const ratio = (0 - start.value) / (end.value - start.value);
+    return {
+      x: start.x + (end.x - start.x) * ratio,
+      y: baseline,
+      value: 0,
+      label: "",
+      count: 0,
+      detail: "",
+      raw: null,
+      index: start.index
+    };
+  };
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (start.value * end.value < 0) {
+      const zeroPoint = splitAtZero(start, end);
+      curveSegments.push({ start, end: zeroPoint, negative: start.value < 0 });
+      curveSegments.push({ start: zeroPoint, end, negative: end.value < 0 });
+    } else {
+      curveSegments.push({ start, end, negative: start.value < 0 || end.value < 0 });
+    }
+  }
+
+  curveSegments.forEach((segment) => {
+    context.beginPath();
+    context.moveTo(segment.start.x, baseline);
+    context.lineTo(segment.start.x, segment.start.y);
+    context.lineTo(segment.end.x, segment.end.y);
+    context.lineTo(segment.end.x, baseline);
+    context.closePath();
+    context.fillStyle = segment.negative ? palette.redFill : palette.fill;
+    context.fill();
+  });
+
+  context.lineWidth = compact ? 4 : 3;
+  curveSegments.forEach((segment) => {
+    context.beginPath();
+    context.moveTo(segment.start.x, segment.start.y);
+    context.lineTo(segment.end.x, segment.end.y);
+    context.strokeStyle = segment.negative ? palette.red : palette.teal;
+    context.stroke();
+  });
+
+  const bars = points.map((point, index) => {
+    const prev = points[index - 1];
+    const next = points[index + 1];
+    const slotLeft = cleanData.length === 1
+      ? padding.left
+      : index === 0
+        ? padding.left
+        : (prev.x + point.x) / 2;
+    const slotRight = cleanData.length === 1
+      ? width - padding.right
+      : index === points.length - 1
+        ? width - padding.right
+        : (point.x + next.x) / 2;
+    return {
+      x: point.x,
+      y: point.y,
+      width: 0,
+      height: 0,
+      label: point.label,
+      value: point.value,
+      count: point.count,
+      detail: point.detail,
+      centerX: point.x,
+      slotLeft,
+      slotRight,
+      baseline,
+      zone: {
+        left: Math.max(slotLeft, 0),
+        top: Math.max(padding.top - 18, 0),
+        width: Math.max(slotRight - slotLeft, 44),
+        height: chartHeight + padding.bottom + 14
+      },
+      raw: point.raw
+    };
+  });
+
+  points.forEach((point) => {
+    context.beginPath();
+    context.arc(point.x, point.y, compact ? 5 : 4, 0, Math.PI * 2);
+    context.fillStyle = point.value >= 0 ? palette.teal : palette.red;
+    context.fill();
+  });
+
+  barChartStates[canvasId] = { bars, options, type: "curve" };
+  renderBarDomLabels(canvas, bars, options, { width, height, padding, compact, type: "curve" });
+  installBarHitZones(canvas, bars, options);
+}
+
+function drawBarChart(canvasId, data, options = {}) {
+  const canvas = $(`#${canvasId}`);
+  if (!canvas) return;
+  hideBarChartTooltip();
+  resetChartReadout(canvasId, options.prompt || "Tap a bar to see chart details.");
+  const context = canvas.getContext("2d");
+  const { width, height, dpr } = getCanvasDisplaySize(canvas, 320);
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+  const palette = chartPalette();
+  context.fillStyle = palette.bg;
+  context.fillRect(0, 0, width, height);
+
+  const cleanData = data.filter((item) => item && item.label);
+  if (!cleanData.length || cleanData.every((item) => toNumber(item.value) === 0)) {
+    barChartStates[canvasId] = { bars: [], options };
+    clearChartHitLayer(canvasId);
+    clearChartLabelLayer(canvasId);
+    resetChartReadout(canvasId, options.empty || "No data yet");
+    context.fillStyle = palette.text;
+    context.font = "700 15px Segoe UI, sans-serif";
+    context.fillText(options.empty || "No data yet", 18, height / 2);
+    drawChartFrame(context, width, height, { top: 48, right: 40, bottom: 62, left: 48 });
+    return;
+  }
+
+  const compact = isCompactChart(width);
+  const padding = compact
+    ? { top: 56, right: 40, bottom: 104, left: 44 }
+    : { top: 50, right: 60, bottom: 84, left: 68 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const values = cleanData.map((item) => toNumber(item.value));
+  const rawMinValue = Math.min(0, ...values);
+  const rawMaxValue = Math.max(0, ...values);
+  const rawRange = Math.max(rawMaxValue - rawMinValue, 1);
+  const minValue = rawMinValue - rawRange * 0.14;
+  const maxValue = rawMaxValue + rawRange * 0.14;
+  const range = Math.max(maxValue - minValue, 1);
   const baseline = padding.top + chartHeight - ((0 - minValue) / range) * chartHeight;
   const slotWidth = chartWidth / cleanData.length;
-  const barWidth = Math.max(Math.min(slotWidth * 0.68, compact ? 72 : 92), Math.min(slotWidth * 0.82, 10));
+  const barWidth = Math.max(Math.min(slotWidth * 0.54, compact ? 54 : 68), Math.min(slotWidth * 0.7, 9));
   const bars = [];
 
-  context.strokeStyle = "#d9ded7";
+  drawChartFrame(context, width, height, padding);
+
+  context.save();
+  context.globalAlpha = 0.62;
+  context.strokeStyle = palette.grid;
   context.lineWidth = 1;
+  for (let index = 0; index <= 4; index += 1) {
+    const y = padding.top + (chartHeight * index) / 4;
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(width - padding.right, y);
+    context.stroke();
+  }
+  context.restore();
+
   context.beginPath();
   context.moveTo(padding.left, baseline);
   context.lineTo(width - padding.right, baseline);
@@ -3801,7 +5996,7 @@ function drawBarChart(canvasId, data, options = {}) {
     const top = Math.min(y, baseline);
     const barHeight = Math.max(Math.abs(baseline - y), 2);
     const isCount = options.colorMode === "count";
-    context.fillStyle = isCount ? "#2563eb" : value >= 0 ? "#0f766e" : "#be123c";
+    context.fillStyle = isCount ? palette.blue : value >= 0 ? palette.teal : palette.red;
     context.fillRect(x, top, barWidth, barHeight);
     bars.push({
       x,
@@ -3818,6 +6013,10 @@ function drawBarChart(canvasId, data, options = {}) {
         width: Math.max(slotWidth, 44),
         height: chartHeight + padding.bottom + 14
       },
+      centerX: x + barWidth / 2,
+      slotLeft,
+      slotRight: slotLeft + slotWidth,
+      baseline,
       raw: item
     });
 
@@ -3825,8 +6024,8 @@ function drawBarChart(canvasId, data, options = {}) {
   });
 
   context.textAlign = "left";
-  barChartStates[canvasId] = { bars, options };
-  renderBarDomLabels(canvas, bars, options, { width, height, padding, compact });
+  barChartStates[canvasId] = { bars, options, type: "bar" };
+  renderBarDomLabels(canvas, bars, options, { width, height, padding, compact, type: "bar" });
   installBarHitZones(canvas, bars, options);
 }
 
@@ -3857,7 +6056,8 @@ function showBarDetail(canvas, bar, clientX, clientY, persist = false) {
   const tooltip = $("#barChartTooltip");
   if (!state) return;
   const summary = barSummary(bar, state.options);
-  setChartReadout(canvas.id, bar.label, summary.lines);
+  const tone = chartToneForValue(bar.value, state.options);
+  setChartReadout(canvas.id, bar.label, summary.lines, tone);
 
   if (!tooltip || isCoarseChartInput({ type: persist ? "touch" : "mouse", pointerType: persist ? "touch" : "mouse" })) {
     hideBarChartTooltip();
@@ -3870,21 +6070,33 @@ function showBarDetail(canvas, bar, clientX, clientY, persist = false) {
     <p>${escapeHtml(summary.lines[1])}</p>
     <p>${escapeHtml(summary.conclusion)}</p>
   `;
+  setChartTone(tooltip, tone);
   positionFloatingTooltip(tooltip, clientX, clientY);
   tooltip.classList.add("visible");
   if (persist) scheduleTouchTooltipHide();
 }
 
 function findBarFromPoint(state, x, y) {
-  const zoneMatch = state.bars.find((item) => {
+  const slotMatch = state.bars.find((item) => {
+    if (!Number.isFinite(item.slotLeft) || !Number.isFinite(item.slotRight)) return false;
     const zone = item.zone;
-    if (!zone) return false;
-    return x >= zone.left && x <= zone.left + zone.width && y >= zone.top && y <= zone.top + zone.height;
+    const yMin = zone ? zone.top : 0;
+    const yMax = zone ? zone.top + zone.height : Number.POSITIVE_INFINITY;
+    return x >= item.slotLeft && x <= item.slotRight && y >= yMin && y <= yMax;
   });
-  if (zoneMatch) return zoneMatch;
+  if (slotMatch) return slotMatch;
+
+  const rectMatch = state.bars.find((item) => {
+    const left = Math.min(item.x, item.x + item.width) - 10;
+    const right = Math.max(item.x, item.x + item.width) + 10;
+    const top = Math.min(item.y, item.baseline ?? item.y) - 18;
+    const bottom = Math.max(item.y + item.height, item.baseline ?? item.y) + 18;
+    return x >= left && x <= right && y >= top && y <= bottom;
+  });
+  if (rectMatch) return rectMatch;
 
   return state.bars.reduce((best, item) => {
-    const centerX = item.x + item.width / 2;
+    const centerX = item.centerX ?? (item.x + item.width / 2);
     const distance = Math.abs(centerX - x);
     return distance < best.distance ? { bar: item, distance } : best;
   }, { bar: null, distance: Infinity }).bar;
@@ -3918,7 +6130,10 @@ function handleBarChartPointerMove(event) {
 
 function hideBarChartTooltip() {
   const tooltip = $("#barChartTooltip");
-  if (tooltip) tooltip.classList.remove("visible");
+  if (tooltip) {
+    tooltip.classList.remove("visible");
+    setChartTone(tooltip);
+  }
 }
 
 function handleBarChartPointerLeave(event) {
@@ -3971,7 +6186,8 @@ function showEquityDetail(point, clientX, clientY, persist = false) {
   const tooltip = $("#equityTooltip");
   if (!canvas) return;
   const summary = equitySummary(point);
-  setChartReadout("equityChart", point.label, summary.lines);
+  const tone = equityToneForPoint(point);
+  setChartReadout("equityChart", point.label, summary.lines, tone);
 
   if (!tooltip || isCoarseChartInput({ type: persist ? "touch" : "mouse", pointerType: persist ? "touch" : "mouse" })) {
     hideEquityTooltip();
@@ -3983,9 +6199,26 @@ function showEquityDetail(point, clientX, clientY, persist = false) {
     <p>${escapeHtml(summary.lines[0])}</p>
     <p>${escapeHtml(summary.lines[1])}. ${escapeHtml(summary.conclusion)}</p>
   `;
+  setChartTone(tooltip, tone);
   positionChartTooltip(tooltip, canvas, point.x, point.y);
   tooltip.classList.add("visible");
   if (persist) scheduleTouchTooltipHide();
+}
+
+function findEquityPointFromPoint(state, x, y) {
+  const slotMatch = state.points.find((point) => {
+    if (!Number.isFinite(point.slotLeft) || !Number.isFinite(point.slotRight)) return false;
+    const zone = point.zone;
+    const yMin = zone ? zone.top : 0;
+    const yMax = zone ? zone.top + zone.height : Number.POSITIVE_INFINITY;
+    return x >= point.slotLeft && x <= point.slotRight && y >= yMin && y <= yMax;
+  });
+  if (slotMatch) return slotMatch;
+
+  return state.points.reduce((best, point) => {
+    const distance = Math.abs(point.x - x);
+    return distance < best.distance ? { point, distance } : best;
+  }, { point: null, distance: Infinity }).point;
 }
 
 function handleEquityPointerMove(event) {
@@ -3997,23 +6230,23 @@ function handleEquityPointerMove(event) {
   const rect = canvas.getBoundingClientRect();
   const x = eventPoint.clientX - rect.left;
   const y = eventPoint.clientY - rect.top;
-  const nearest = equityChartState.points.reduce((best, point) => {
-    const distance = Math.hypot(point.x - x, point.y - y);
-    return distance < best.distance ? { point, distance } : best;
-  }, { point: null, distance: Infinity });
+  const nearest = findEquityPointFromPoint(equityChartState, x, y);
 
   const touchLike = isTouchLikeEvent(event);
-  if (!nearest.point || (!touchLike && nearest.distance > 44)) {
+  if (!nearest) {
     if (!touchLike) hideEquityTooltip();
     return;
   }
 
-  showEquityDetail(nearest.point, eventPoint.clientX, eventPoint.clientY, touchLike);
+  showEquityDetail(nearest, eventPoint.clientX, eventPoint.clientY, touchLike);
 }
 
 function hideEquityTooltip() {
   const tooltip = $("#equityTooltip");
-  if (tooltip) tooltip.classList.remove("visible");
+  if (tooltip) {
+    tooltip.classList.remove("visible");
+    setChartTone(tooltip);
+  }
 }
 
 function handleEquityPointerLeave(event) {
@@ -4087,7 +6320,7 @@ function renderLeaderboard(selector, stats, type) {
     .slice(0, 6)
     .map((item) => {
       const width = Math.min((Math.abs(item.netR) / topAbs) * 100, 100);
-      const color = item.netR >= 0 ? "#0f766e" : "#be123c";
+      const color = item.netR >= 0 ? cssVar("--teal", "#0f766e") : cssVar("--red", "#be123c");
       return `
         <article class="leader-row">
           <div>
@@ -4128,7 +6361,7 @@ function renderCashLeaderboard(selector, stats, emptyLabel) {
     .slice(0, 6)
     .map((item) => {
       const width = Math.min((Math.abs(item.netPl) / topAbs) * 100, 100);
-      const color = item.netPl >= 0 ? "#0f766e" : "#be123c";
+      const color = item.netPl >= 0 ? cssVar("--teal", "#0f766e") : cssVar("--red", "#be123c");
       return `
         <article class="leader-row">
           <div>
@@ -4212,14 +6445,201 @@ function renderBestProfile(stats) {
   `;
 }
 
+function setupTypeMeta(type) {
+  return setupTypeBlueprints[type] || setupTypeBlueprints["Custom / Other"];
+}
+
+function averageScore(items, key, fallback = 0) {
+  return items.length ? sum(items, (trade) => scoreValue(trade, key, fallback)) / items.length : 0;
+}
+
+function setupProfileStatus(profile) {
+  if (!profile.count) return { label: "No sample", tone: "neutral" };
+  if (profile.count < 5) return { label: "Needs sample", tone: "sample" };
+  if (profile.avgR > 0 && profile.discipline >= 70 && profile.setupScore >= 70) return { label: "Proven edge", tone: "edge" };
+  if (profile.avgR > 0) return { label: "Promising", tone: "sample" };
+  if (profile.discipline < 60 || profile.mistakeCost < 0) return { label: "Rule leak", tone: "leak" };
+  return { label: "Needs refinement", tone: "neutral" };
+}
+
+function setupProfileFromTrades(setup, items = []) {
+  const name = String(setup || "Unknown Setup").trim() || "Unknown Setup";
+  const wins = items.filter((trade) => toNumber(trade.resultR) > 0);
+  const losses = items.filter((trade) => toNumber(trade.resultR) < 0);
+  const resolved = wins.length + losses.length;
+  const netR = sum(items, (trade) => toNumber(trade.resultR));
+  const mistakes = items.flatMap((trade) => tradeTagsForReview(trade, "mistake"));
+  const setupType = topFrequencyValue(items.map((trade) => trade.setupType || setupTypeForSetup(name)))?.name || setupTypeForSetup(name);
+  const profile = {
+    name,
+    setupType,
+    count: items.length,
+    netR,
+    avgR: items.length ? netR / items.length : 0,
+    winRate: resolved ? (wins.length / resolved) * 100 : 0,
+    discipline: averageScore(items, "discipline", 70),
+    confidence: averageScore(items, "confidence", 60),
+    setupScore: averageScore(items, "setupScore", 70),
+    mistakeCost: sum(items.filter((trade) => trade.mistake && trade.mistake !== "None"), tradePl),
+    topMistake: topFrequencyValue(mistakes)?.name || "None",
+    topPair: topFrequencyValue(items.map((trade) => trade.pair))?.name || "Any",
+    topSession: topFrequencyValue(items.map((trade) => trade.session))?.name || "Any"
+  };
+  profile.status = setupProfileStatus(profile);
+  return profile;
+}
+
+function setupProfileStats(list = trades) {
+  return Object.entries(groupBy(list.filter((trade) => String(trade.setup || "").trim()), (trade) => trade.setup))
+    .map(([setup, items]) => setupProfileFromTrades(setup, items))
+    .sort((a, b) => b.count - a.count || b.avgR - a.avgR || a.name.localeCompare(b.name));
+}
+
+function existingStrategyForSetup(setup) {
+  const normalized = String(setup || "").trim().toLowerCase();
+  if (!normalized) return null;
+  return strategies.find((strategy) => String(strategy.linkedSetup || strategy.name || "").trim().toLowerCase() === normalized) || null;
+}
+
+function strategyDraftForSetupProfile(profile) {
+  const setup = String(profile?.name || "").trim();
+  const setupType = profile?.setupType || setupTypeForSetup(setup);
+  const meta = setupTypeMeta(setupType);
+  const existing = existingStrategyForSetup(setup);
+  const conditionParts = [
+    meta.description,
+    profile?.count ? `${profile.topPair} / ${profile.topSession} has ${profile.count} recorded samples.` : "Add samples before trusting this setup."
+  ];
+
+  return {
+    ...(existing || {}),
+    id: existing?.id || crypto.randomUUID(),
+    linkedSetup: setup,
+    setupType,
+    name: existing?.name || `${setup} Playbook`,
+    market: existing?.market || conditionParts.join(" "),
+    trigger: existing?.trigger || meta.valid.join("; "),
+    invalidation: existing?.invalidation || meta.invalid.join("; "),
+    riskRule: existing?.riskRule || "Setup score 70+, confidence 60+, no-trade filters clear, SL beyond invalidation, and target R:R at least 1:1.5.",
+    management: existing?.management || "Manage toward the next structure or liquidity target. Do not move SL emotionally.",
+    reviewRule: existing?.reviewRule || `After every ${setup} trade, review setup score, confidence, discipline, mistake tag, and whether the setup followed ${setupType}.`,
+    sampleSize: profile?.count || 0,
+    winRate: roundNumber(profile?.winRate || 0, 2),
+    avgR: roundNumber(profile?.avgR || 0, 2),
+    netR: roundNumber(profile?.netR || 0, 2),
+    avgDiscipline: roundNumber(profile?.discipline || 0, 2),
+    avgConfidence: roundNumber(profile?.confidence || 0, 2),
+    avgSetupScore: roundNumber(profile?.setupScore || 0, 2),
+    mistakeCost: roundNumber(profile?.mistakeCost || 0, 2),
+    profileStatus: profile?.status?.label || "No sample",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function setupProfileMatchesFilters(profile) {
+  const query = setupPlaybookSearch.trim().toLowerCase();
+  const haystack = [
+    profile.name,
+    profile.setupType,
+    profile.status.label,
+    profile.topMistake,
+    profile.topPair,
+    profile.topSession
+  ].join(" ").toLowerCase();
+  const matchesSearch = !query || haystack.includes(query);
+  const matchesStatus = setupPlaybookStatus === "all" || profile.status.label === setupPlaybookStatus;
+  const matchesType = setupPlaybookType === "all" || profile.setupType === setupPlaybookType;
+  return matchesSearch && matchesStatus && matchesType;
+}
+
+function renderSetupPlaybook() {
+  const container = $("#setupPlaybookList");
+  if (!container) return;
+  const allProfiles = setupProfileStats();
+  const profiles = allProfiles.filter(setupProfileMatchesFilters);
+  if (!allProfiles.length) {
+    container.innerHTML = '<div class="empty-state visible">Record trades to build setup profiles.</div>';
+    return;
+  }
+  if (!profiles.length) {
+    container.innerHTML = '<div class="empty-state visible">No setup profiles match these filters.</div>';
+    return;
+  }
+
+  container.innerHTML = profiles
+    .map((profile) => {
+      const linked = Boolean(existingStrategyForSetup(profile.name));
+      return `
+        <article class="setup-profile-card">
+          <header>
+            <div>
+              <strong>${escapeHtml(profile.name)}</strong>
+              <p>${escapeHtml(profile.setupType)}</p>
+            </div>
+            <span class="status-pill setup-status ${escapeHtml(profile.status.tone)}">${escapeHtml(profile.status.label)}</span>
+          </header>
+          <div class="setup-profile-stats">
+            <span><small>Sample</small><strong>${profile.count}</strong></span>
+            <span><small>Net R</small><strong>${formatR(profile.netR)}</strong></span>
+            <span><small>Win</small><strong>${formatPercent(profile.winRate)}</strong></span>
+            <span><small>Avg R</small><strong>${formatR(profile.avgR)}</strong></span>
+            <span><small>Discipline</small><strong>${formatPercent(profile.discipline)}</strong></span>
+            <span><small>Confidence</small><strong>${formatPercent(profile.confidence)}</strong></span>
+          </div>
+          <p class="setup-profile-note">Mistake cost ${currencyFormatter.format(profile.mistakeCost)}. Main leak: ${escapeHtml(profile.topMistake)}.</p>
+          <button class="tool-button compact" type="button" data-setup-action="strategy" data-setup="${escapeHtml(profile.name)}">
+            ${linked ? "Update Strategy" : "Create Strategy"}
+          </button>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function strategyQualityTier(strategy) {
+  const score = qualityScore(strategy);
+  if (score >= 85) return "complete";
+  if (score >= 65) return "solid";
+  return "draft";
+}
+
+function strategyMatchesFilters(strategy) {
+  const query = strategySearch.trim().toLowerCase();
+  const haystack = [
+    strategy.name,
+    strategy.linkedSetup,
+    strategy.setupType,
+    strategy.market,
+    strategy.trigger,
+    strategy.invalidation,
+    strategy.riskRule,
+    strategy.management,
+    strategy.reviewRule,
+    strategy.profileStatus
+  ].join(" ").toLowerCase();
+  const matchesSearch = !query || haystack.includes(query);
+  const matchesQuality = strategyQuality === "all"
+    || strategyQualityTier(strategy) === strategyQuality
+    || (strategyQuality === "linked" && Boolean(strategy.linkedSetup));
+  const matchesType = strategySetupType === "all" || (strategy.setupType || "Custom / Other") === strategySetupType;
+  return matchesSearch && matchesQuality && matchesType;
+}
+
 function renderStrategies() {
+  renderSetupPlaybook();
   const container = $("#strategyList");
   if (!strategies.length) {
     container.innerHTML = '<div class="empty-state visible">No strategies saved.</div>';
     return;
   }
 
-  container.innerHTML = strategies
+  const visibleStrategies = strategies.filter(strategyMatchesFilters);
+  if (!visibleStrategies.length) {
+    container.innerHTML = '<div class="empty-state visible">No saved strategies match these filters.</div>';
+    return;
+  }
+
+  container.innerHTML = visibleStrategies
     .map((strategy) => {
       const score = qualityScore(strategy);
       return `
@@ -4227,9 +6647,10 @@ function renderStrategies() {
           <header>
             <div>
               <strong>${escapeHtml(strategy.name)}</strong>
-              <p>${escapeHtml(strategy.market || "Market condition not set")}</p>
+              <p>${escapeHtml(strategy.linkedSetup || "Manual strategy")} · ${escapeHtml(strategy.setupType || "Custom / Other")}</p>
             </div>
             <div class="strategy-actions">
+              ${strategy.linkedSetup ? `<button class="mini-button" title="Update from setup profile" aria-label="Update from setup profile" data-strategy-action="refresh" data-id="${strategy.id}">Sync</button>` : ""}
               <button class="mini-button" title="Edit strategy" aria-label="Edit strategy" data-strategy-action="edit" data-id="${strategy.id}">${iconMarkup("edit")}</button>
               <button class="mini-button danger" title="Delete strategy" aria-label="Delete strategy" data-strategy-action="delete" data-id="${strategy.id}">${iconMarkup("trash")}</button>
             </div>
@@ -4238,6 +6659,12 @@ function renderStrategies() {
             <span>Rule quality ${score}%</span>
             <div class="quality-bar"><div class="quality-fill" style="width:${score}%"></div></div>
           </div>
+          <div class="strategy-stat-row">
+            <span>${Number(strategy.sampleSize || 0)} samples</span>
+            <span>${formatR(toNumber(strategy.avgR))} avg</span>
+            <span>${formatPercent(toNumber(strategy.avgDiscipline))} discipline</span>
+          </div>
+          <p class="strategy-market">${escapeHtml(strategy.market || "Market condition not set")}</p>
           <p><strong>Trigger</strong> ${escapeHtml(strategy.trigger || "No trigger")}</p>
           <p><strong>Risk</strong> ${escapeHtml(strategy.riskRule || "No risk rule")}</p>
         </article>
@@ -4246,10 +6673,43 @@ function renderStrategies() {
     .join("");
 }
 
+function createOrUpdateStrategyFromSetup(setup) {
+  if (!String(setup || "").trim()) {
+    showToast("Select a setup before creating a strategy.");
+    return;
+  }
+  const profile = setupProfileFromTrades(setup, trades.filter((trade) => String(trade.setup || "").trim() === setup));
+  const draft = strategyDraftForSetupProfile(profile);
+  const index = strategies.findIndex((strategy) => strategy.id === draft.id || String(strategy.linkedSetup || "").toLowerCase() === setup.toLowerCase());
+  if (index >= 0) strategies[index] = draft;
+  else strategies.push(draft);
+  saveStrategies();
+  fillStrategyForm(draft);
+  renderStrategies();
+  showToast(`${setup} strategy ${index >= 0 ? "updated" : "created"}.`);
+}
+
+function openCurrentSetupInStrategyBuilder() {
+  const form = $("#tradeForm");
+  const setup = String(form?.elements.setup.value || "").trim();
+  if (!setup) {
+    showToast("Select a setup before opening Strategy Lab.");
+    return;
+  }
+  const profile = setupProfileFromTrades(setup, trades.filter((trade) => String(trade.setup || "").trim() === setup));
+  const draft = strategyDraftForSetupProfile(profile);
+  document.querySelector('[data-view="strategy"]')?.click();
+  fillStrategyForm(draft);
+  closeTradeTicketModal();
+  showToast(`${setup} loaded into Strategy Builder.`);
+}
+
 function readTradeForm() {
   const form = $("#tradeForm");
   const data = new FormData(form);
   const direction = data.get("direction");
+  const scoreChecks = scoreChecksFromForm();
+  const scores = calculateScoreEngine(scoreChecks, data.get("mistake"));
   const calc = calculateTradeNumbers({
     pair: data.get("pair"),
     direction,
@@ -4272,6 +6732,9 @@ function readTradeForm() {
     sessionAuto: form.elements.session.dataset.auto === "true",
     direction,
     setup: String(data.get("setup") || "").trim(),
+    setupType: String(data.get("setupType") || "").trim(),
+    setupScore: scores.setup,
+    scoreChecks,
     entry: parseOptionalNumber(data.get("entry")) ?? 0,
     stop: parseOptionalNumber(data.get("stop")) ?? 0,
     target: parseOptionalNumber(data.get("target")) ?? 0,
@@ -4294,9 +6757,11 @@ function readTradeForm() {
     commissionPerLot: parseOptionalNumber(data.get("commissionPerLot")) ?? settings.commissionPerLot,
     commission: parseOptionalNumber(data.get("commission")) ?? 0,
     swap: parseOptionalNumber(data.get("swap")) ?? 0,
+    positive: data.get("positive") || "None",
+    positiveTags: data.get("positive") && data.get("positive") !== "None" ? [data.get("positive")] : [],
     mistake: data.get("mistake"),
-    confidence: toNumber(data.get("confidence")),
-    discipline: toNumber(data.get("discipline")),
+    confidence: scores.confidence,
+    discipline: scores.discipline,
     tags: String(data.get("tags") || "")
       .split(",")
       .map((tag) => tag.trim())
@@ -4306,50 +6771,53 @@ function readTradeForm() {
 }
 
 function scrollTradeTicketIntoView() {
-  const ticketPanel = $("#tradeForm")?.closest(".panel");
-  if (!ticketPanel) return;
-  const rect = ticketPanel.getBoundingClientRect();
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
-  const comfortableTop = 16;
-  const comfortableBottom = Math.max(viewportHeight - 40, comfortableTop);
-  const alreadyComfortable = rect.top >= comfortableTop && rect.top <= comfortableBottom && rect.bottom > 120;
-  if (alreadyComfortable) return;
-  ticketPanel.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+  openTradeTicketModal();
 }
 
 function fillTradeForm(trade) {
+  const normalizedTrade = normalizeTradeReviewFields(trade);
   const form = $("#tradeForm");
-  ensurePairAvailable(trade.pair, trade.contractSize);
-  renderPairOptions(trade.pair);
-  form.elements.id.value = trade.id;
-  form.elements.date.value = trade.date;
-  form.elements.openTime.value = tradeOpenTime(trade);
-  form.elements.pair.value = normalizePair(trade.pair);
+  ensurePairAvailable(normalizedTrade.pair, normalizedTrade.contractSize);
+  renderPairOptions(normalizedTrade.pair);
+  renderTradeChoiceOptions({
+    setup: normalizedTrade.setup || "",
+    setupType: normalizedTrade.setupType || "",
+    positive: normalizedTrade.positive || normalizedTrade.positiveTags?.[0] || "None",
+    mistake: normalizedTrade.mistake || "None"
+  });
+  form.elements.id.value = normalizedTrade.id;
+  form.elements.date.value = normalizedTrade.date;
+  form.elements.openTime.value = tradeOpenTime(normalizedTrade);
+  form.elements.pair.value = normalizePair(normalizedTrade.pair);
   if (!form.elements.pair.value) form.elements.pair.value = defaultPair;
   syncPairTicket(form.elements.pair.value);
-  const inferredSession = trade.session || inferSessionFromTradeDateTime(trade.date, tradeOpenTime(trade));
+  const inferredSession = normalizedTrade.session || inferSessionFromTradeDateTime(normalizedTrade.date, tradeOpenTime(normalizedTrade));
   form.elements.session.value = inferredSession;
-  form.elements.session.dataset.auto = trade.sessionAuto || (!trade.session && inferredSession) ? "true" : "";
-  form.elements.setup.value = trade.setup;
-  form.elements.entry.value = trade.entry || "";
-  form.elements.stop.value = trade.stop || "";
-  form.elements.target.value = trade.target || "";
-  form.elements.exit.value = trade.exit || "";
-  form.elements.lotSize.value = trade.lotSize || "";
+  form.elements.session.dataset.auto = normalizedTrade.sessionAuto || (!normalizedTrade.session && inferredSession) ? "true" : "";
+  form.elements.setup.value = normalizedTrade.setup || "";
+  form.elements.setupType.value = normalizedTrade.setupType || setupTypeForSetup(normalizedTrade.setup);
+  form.elements.setupScore.value = normalizeScorePercent(normalizedTrade.setupScore, 70);
+  form.elements.entry.value = normalizedTrade.entry ?? "";
+  form.elements.stop.value = normalizedTrade.stop ?? "";
+  form.elements.target.value = normalizedTrade.target ?? "";
+  form.elements.exit.value = normalizedTrade.exit ?? "";
+  form.elements.lotSize.value = normalizedTrade.lotSize ?? "";
   form.elements.contractSize.value = defaultContractSize(form.elements.pair.value);
-  form.elements.quoteToAccount.value = trade.quoteToAccount || "";
-  form.elements.manualR.value = trade.manualR || "";
-  form.elements.commissionPerLot.value = trade.commissionPerLot || settings.commissionPerLot;
-  form.elements.commission.dataset.manual = trade.commission === undefined ? "" : "true";
-  form.elements.commission.value = trade.commission || "";
-  form.elements.swap.value = trade.swap || "";
-  form.elements.mistake.value = trade.mistake || "None";
-  form.elements.confidence.value = trade.confidence || 60;
-  form.elements.discipline.value = trade.discipline || 70;
-  form.elements.tags.value = (trade.tags || []).join(", ");
-  form.elements.notes.value = trade.notes || "";
-  setSegment("direction", trade.direction || "Buy");
-  updateSliderOutputs();
+  form.elements.quoteToAccount.value = normalizedTrade.quoteToAccount ?? "";
+  form.elements.manualR.value = normalizedTrade.manualR ?? "";
+  form.elements.commissionPerLot.value = normalizedTrade.commissionPerLot ?? settings.commissionPerLot;
+  form.elements.commission.dataset.manual = normalizedTrade.commission === undefined ? "" : "true";
+  form.elements.commission.value = normalizedTrade.commission ?? "";
+  form.elements.swap.value = normalizedTrade.swap ?? "";
+  form.elements.positive.value = normalizedTrade.positive || normalizedTrade.positiveTags?.[0] || "None";
+  form.elements.mistake.value = normalizedTrade.mistake || "None";
+  form.elements.confidence.value = normalizeScorePercent(normalizedTrade.confidence, 60);
+  form.elements.discipline.value = normalizeScorePercent(normalizedTrade.discipline, 70);
+  setScoreChecks(normalizedTrade.scoreChecks);
+  form.elements.tags.value = (normalizedTrade.tags || []).join(", ");
+  form.elements.notes.value = normalizedTrade.notes || "";
+  setSegment("direction", normalizedTrade.direction || "Buy");
+  applyScoreEngine();
   updateTradePreview();
   $("#saveTradeBtn").innerHTML = `${iconMarkup("save")} Update Trade`;
 }
@@ -4358,6 +6826,12 @@ function resetTradeForm() {
   const form = $("#tradeForm");
   pendingMt5OrderId = "";
   form.reset();
+  renderTradeChoiceOptions({
+    setup: "",
+    setupType: "Custom / Other",
+    positive: "None",
+    mistake: "None"
+  });
   form.elements.id.value = "";
   form.elements.date.value = localDateKey();
   form.elements.openTime.value = "";
@@ -4368,10 +6842,14 @@ function resetTradeForm() {
   form.elements.commission.dataset.manual = "";
   form.elements.swap.value = 0;
   syncCommissionDefault(true);
+  form.elements.setupScore.value = 70;
+  form.elements.positive.value = "None";
+  form.elements.mistake.value = "None";
   form.elements.confidence.value = 60;
   form.elements.discipline.value = 70;
+  setScoreChecks(defaultScoreChecks());
   setSegment("direction", "Buy");
-  updateSliderOutputs();
+  applyScoreEngine();
   updateTradePreview();
   $("#saveTradeBtn").innerHTML = `${iconMarkup("save")} Save Trade`;
 }
@@ -4382,6 +6860,8 @@ function readStrategyForm() {
   return {
     id: data.get("id") || crypto.randomUUID(),
     name: String(data.get("name") || "").trim(),
+    linkedSetup: String(data.get("linkedSetup") || "").trim(),
+    setupType: String(data.get("setupType") || "").trim() || "Custom / Other",
     market: String(data.get("market") || "").trim(),
     trigger: String(data.get("trigger") || "").trim(),
     invalidation: String(data.get("invalidation") || "").trim(),
@@ -4394,6 +6874,7 @@ function readStrategyForm() {
 
 function fillStrategyForm(strategy) {
   const form = $("#strategyForm");
+  renderStrategySetupTypeOptions(strategy.setupType || "Custom / Other");
   Object.entries(strategy).forEach(([key, value]) => {
     if (form.elements[key]) form.elements[key].value = value || "";
   });
@@ -4402,6 +6883,7 @@ function fillStrategyForm(strategy) {
 function resetStrategyForm() {
   $("#strategyForm").reset();
   $("#strategyForm").elements.id.value = "";
+  renderStrategySetupTypeOptions("Custom / Other");
 }
 
 function setSegment(field, value) {
@@ -4416,6 +6898,7 @@ function setSegment(field, value) {
 }
 
 function updateSliderOutputs() {
+  $("#setupScoreOut").textContent = $("#tradeForm").elements.setupScore.value;
   $("#confidenceOut").textContent = $("#tradeForm").elements.confidence.value;
   $("#disciplineOut").textContent = $("#tradeForm").elements.discipline.value;
 }
@@ -4464,7 +6947,7 @@ function downloadFile(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
-function exportCsv() {
+function tradeCsvContent(list) {
   const headers = [
     "date",
     "openTime",
@@ -4478,6 +6961,9 @@ function exportCsv() {
     "session",
     "direction",
     "setup",
+    "setupType",
+    "setupScore",
+    "scoreChecks",
     "entry",
     "stop",
     "target",
@@ -4500,21 +6986,54 @@ function exportCsv() {
     "commissionPerLot",
     "commission",
     "swap",
+    "positive",
+    "positiveTags",
     "mistake",
     "confidence",
     "discipline",
     "tags",
     "notes"
   ];
-  const rows = trades.map((trade) =>
+  const rows = list.map((trade) =>
     headers
       .map((header) => {
-        const value = Array.isArray(trade[header]) ? trade[header].join("; ") : trade[header] ?? "";
+        const rawValue = trade[header];
+        const value = Array.isArray(rawValue) ? rawValue.join("; ") : rawValue && typeof rawValue === "object" ? JSON.stringify(rawValue) : rawValue ?? "";
         return `"${String(value).replace(/"/g, '""')}"`;
       })
       .join(",")
   );
-  downloadFile("fx-trades.csv", [headers.join(","), ...rows].join("\n"), "text/csv");
+  return [headers.join(","), ...rows].join("\n");
+}
+
+function exportJsonBackup() {
+  const content = JSON.stringify({
+    profileName: activeAccount?.name || "FX Edge Journal",
+    trades,
+    strategies,
+    customPairs,
+    settings,
+    exportedAt: new Date().toISOString()
+  }, null, 2);
+  downloadFile("fx-edge-journal.json", content, "application/json");
+}
+
+function exportCsv() {
+  downloadFile("fx-trades.csv", tradeCsvContent(trades), "text/csv");
+}
+
+function exportFilteredCsv() {
+  const list = filteredTrades();
+  if (!list.length) {
+    showToast("No trades match the current filters.");
+    return;
+  }
+
+  const start = $("#historyStartFilter")?.value || "all";
+  const end = $("#historyEndFilter")?.value || "all";
+  const filename = `fx-trades-view-${start}-to-${end}.csv`.replace(/[^a-z0-9._-]+/gi, "-");
+  downloadFile(filename, tradeCsvContent(list), "text/csv");
+  showToast(`Exported ${list.length} filtered ${list.length === 1 ? "trade" : "trades"}.`);
 }
 
 function importJson(file) {
@@ -4528,6 +7047,7 @@ function importJson(file) {
       }
       if (parsed.settings && typeof parsed.settings === "object") {
         Object.assign(settings, parsed.settings);
+        normalizeSettingsLists();
         saveSettings();
       }
       parsed.trades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
@@ -4540,11 +7060,18 @@ function importJson(file) {
         })
       );
       strategies = Array.isArray(parsed.strategies) ? parsed.strategies : strategies;
+      if (activeAccount && parsed.profileName) {
+        activeAccount.name = cleanAccountName(parsed.profileName) || activeAccount.name;
+        const storedAccount = accountById(activeAccount.id);
+        if (storedAccount) storedAccount.name = activeAccount.name;
+        saveAccounts();
+      }
       saveTrades();
       saveStrategies();
       renderPairOptions(defaultPair);
       renderMarketChartOptions(marketChartPair);
       render();
+      syncAccountUi();
       showToast("Import complete.");
     } catch (error) {
       showToast("Import failed. Use a JSON export from this app.");
@@ -4566,7 +7093,8 @@ function iconMarkup(name) {
   const icons = {
     edit: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
     trash: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M9 11v6M15 11v6M6 6l1 15h10l1-15"/></svg>',
-    save: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM7 21v-8h10v8M7 3v5h8"/></svg>'
+    save: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM7 21v-8h10v8M7 3v5h8"/></svg>',
+    cloud: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>'
   };
   return icons[name] || "";
 }
@@ -4617,18 +7145,56 @@ function openMt5Application(event) {
 }
 
 function bindEvents() {
-  const switchAccountButton = $("#switchAccountBtn");
-  if (switchAccountButton) {
-    switchAccountButton.addEventListener("click", () => {
-      showAuthOverlay(accounts.some(canLocalSignIn) ? "login" : "cloud", false);
+  const manageProfileButton = $("#manageProfileBtn");
+  if (manageProfileButton) manageProfileButton.addEventListener("click", openProfileManagement);
+
+  const logoutAccountButton = $("#logoutAccountBtn");
+  if (logoutAccountButton) logoutAccountButton.addEventListener("click", handleAccountLogout);
+
+  const closeProfileButton = $("#closeProfileManagementBtn");
+  if (closeProfileButton) closeProfileButton.addEventListener("click", closeProfileManagement);
+
+  const profileModal = $("#profileManagementModal");
+  if (profileModal) {
+    profileModal.addEventListener("click", (event) => {
+      if (event.target === profileModal) closeProfileManagement();
     });
   }
 
-  const logoutAccountButton = $("#logoutAccountBtn");
-  if (logoutAccountButton) logoutAccountButton.addEventListener("click", () => lockAccount());
+  const profileNameForm = $("#profileNameForm");
+  if (profileNameForm) profileNameForm.addEventListener("submit", handleProfileNameSubmit);
+
+  const profileSyncButton = $("#profileSyncNowBtn");
+  if (profileSyncButton) profileSyncButton.addEventListener("click", syncProfileNow);
+
+  const profileOpenCloudButton = $("#profileOpenCloudBtn");
+  if (profileOpenCloudButton) profileOpenCloudButton.addEventListener("click", () => openCloudProfile());
+
+  const profileMigrateButton = $("#profileMigrateBtn");
+  if (profileMigrateButton) profileMigrateButton.addEventListener("click", migrateActiveAccountToCloud);
+
+  const profileExportJsonButton = $("#profileExportJsonBtn");
+  if (profileExportJsonButton) profileExportJsonButton.addEventListener("click", exportJsonBackup);
+
+  const profileImportJsonButton = $("#profileImportJsonBtn");
+  if (profileImportJsonButton) profileImportJsonButton.addEventListener("click", () => $("#importFile")?.click());
+
+  const profileExportCsvButton = $("#profileExportCsvBtn");
+  if (profileExportCsvButton) profileExportCsvButton.addEventListener("click", exportFilteredCsv);
+
+  const profileSignOutButton = $("#profileSignOutBtn");
+  if (profileSignOutButton) {
+    profileSignOutButton.addEventListener("click", async () => {
+      await handleAccountLogout();
+      closeProfileManagement();
+    });
+  }
 
   const closeAuthButton = $("#closeAuthBtn");
   if (closeAuthButton) closeAuthButton.addEventListener("click", hideAuthOverlay);
+
+  const closeLoginPageButton = $("#closeLoginPageBtn");
+  if (closeLoginPageButton) closeLoginPageButton.addEventListener("click", closeLoginPage);
 
   $$(".auth-tabs .segment").forEach((button) => {
     button.addEventListener("click", () => setAuthMode(button.dataset.authMode));
@@ -4646,27 +7212,104 @@ function bindEvents() {
   const cloudSignUpButton = $("#cloudSignUpBtn");
   if (cloudSignUpButton) cloudSignUpButton.addEventListener("click", handleCloudSignUp);
 
-  const openCloudAuthButton = $("#openCloudAuthBtn");
-  if (openCloudAuthButton) openCloudAuthButton.addEventListener("click", () => showAuthOverlay("cloud", false));
+  const googleSignInButton = $("#googleSignInBtn");
+  if (googleSignInButton) googleSignInButton.addEventListener("click", handleCloudGoogleSignIn);
 
-  const openCloudProfileButton = $("#openCloudProfileBtn");
-  if (openCloudProfileButton) openCloudProfileButton.addEventListener("click", () => openCloudProfile());
+  const pageLoginForm = $("#pageLoginForm");
+  if (pageLoginForm) pageLoginForm.addEventListener("submit", handleLogin);
 
-  const migrateCloudButton = $("#migrateCloudBtn");
-  if (migrateCloudButton) migrateCloudButton.addEventListener("click", migrateActiveAccountToCloud);
+  const pageCreateAccountForm = $("#pageCreateAccountForm");
+  if (pageCreateAccountForm) pageCreateAccountForm.addEventListener("submit", handleCreateAccount);
 
-  const syncNowButton = $("#syncNowBtn");
-  if (syncNowButton) {
-    syncNowButton.addEventListener("click", () => {
-      upsertCloudSnapshot(currentJournalSnapshot(), "manual").then(() => fetchMt5DetectedOrders({ silent: true })).catch((error) => showToast(friendlyCloudError(error)));
+  const loginCloudAuthForm = $("#loginCloudAuthForm");
+  if (loginCloudAuthForm) loginCloudAuthForm.addEventListener("submit", handleCloudSignIn);
+
+  const loginCloudCreateForm = $("#loginCloudCreateForm");
+  if (loginCloudCreateForm) loginCloudCreateForm.addEventListener("submit", handleCloudSignUp);
+
+  const showCloudCreateButton = $("#showCloudCreateBtn");
+  if (showCloudCreateButton) {
+    showCloudCreateButton.addEventListener("click", () => {
+      const panel = $("#cloudCreatePanel");
+      if (!panel) return;
+      panel.classList.remove("hidden");
+      panel.querySelector("input")?.focus();
     });
   }
 
-  const cloudSignOutButton = $("#cloudSignOutBtn");
-  if (cloudSignOutButton) cloudSignOutButton.addEventListener("click", handleCloudSignOut);
+  const hideCloudCreateButton = $("#hideCloudCreateBtn");
+  if (hideCloudCreateButton) {
+    hideCloudCreateButton.addEventListener("click", () => {
+      const panel = $("#cloudCreatePanel");
+      panel?.classList.add("hidden");
+      $("#loginCloudCreateForm")?.reset();
+    });
+  }
+
+  const loginGoogleSignInButton = $("#loginGoogleSignInBtn");
+  if (loginGoogleSignInButton) loginGoogleSignInButton.addEventListener("click", handleCloudGoogleSignIn);
+
+  const showLocalCreateButton = $("#showLocalCreateBtn");
+  if (showLocalCreateButton) {
+    showLocalCreateButton.addEventListener("click", () => {
+      const form = $("#pageCreateAccountForm");
+      if (!form) return;
+      form.classList.remove("hidden");
+      form.elements.name?.focus();
+    });
+  }
+
+  const hideLocalCreateButton = $("#hideLocalCreateBtn");
+  if (hideLocalCreateButton) {
+    hideLocalCreateButton.addEventListener("click", () => {
+      const form = $("#pageCreateAccountForm");
+      form?.reset();
+      form?.classList.add("hidden");
+    });
+  }
+
+  $$('input[name="keepSignedIn"]').forEach((keepSignedInControl) => {
+    keepSignedInControl.addEventListener("change", () => {
+      keepSignedInControl.dataset.touched = "true";
+    });
+  });
+
+  const openCloudAuthButton = $("#openCloudAuthBtn");
+  if (openCloudAuthButton) {
+    openCloudAuthButton.addEventListener("click", () => {
+      if (cloudUser || isCloudAccount(activeAccount)) {
+        openProfileManagement();
+        return;
+      }
+      showAuthOverlay("cloud", false);
+    });
+  }
+
+  const cloudManageProfileButton = $("#cloudManageProfileBtn");
+  if (cloudManageProfileButton) cloudManageProfileButton.addEventListener("click", openProfileManagement);
 
   const openMt5AppLink = $("#openMt5AppLink");
   if (openMt5AppLink) openMt5AppLink.addEventListener("click", openMt5Application);
+
+  const themeSelect = $("#themeSelect");
+  if (themeSelect) {
+    themeSelect.addEventListener("change", (event) => {
+      settings.themeMode = ["light", "dark", "system"].includes(event.target.value) ? event.target.value : "system";
+      applyThemePreference();
+      saveSettings();
+      rerenderAnalyticsSoon(80);
+    });
+  }
+  if (systemThemeMedia) {
+    const handleSystemThemeChange = () => {
+      if ((settings.themeMode || "system") === "system") {
+        applyThemePreference();
+        rerenderAnalyticsSoon(80);
+      }
+    };
+    if (systemThemeMedia.addEventListener) systemThemeMedia.addEventListener("change", handleSystemThemeChange);
+    else if (systemThemeMedia.addListener) systemThemeMedia.addListener(handleSystemThemeChange);
+  }
 
   const generateMt5TokenButton = $("#generateMt5TokenBtn");
   if (generateMt5TokenButton) generateMt5TokenButton.addEventListener("click", () => generateMt5BridgeToken("desktop"));
@@ -4688,6 +7331,9 @@ function bindEvents() {
     });
   }
 
+  const ignoreRecordedMt5OrdersButton = $("#ignoreRecordedMt5OrdersBtn");
+  if (ignoreRecordedMt5OrdersButton) ignoreRecordedMt5OrdersButton.addEventListener("click", ignoreAlreadyRecordedMt5Orders);
+
   const mt5InboxList = $("#mt5InboxList");
   if (mt5InboxList) {
     mt5InboxList.addEventListener("click", (event) => {
@@ -4705,8 +7351,33 @@ function bindEvents() {
     });
   }
 
+  const tradeTicketModal = $("#tradeTicketModal");
+  if (tradeTicketModal) {
+    tradeTicketModal.addEventListener("pointerdown", (event) => {
+      if (event.target === tradeTicketModal) closeTradeTicketModal();
+    });
+  }
+  const closeTradeTicketButton = $("#closeTradeTicketBtn");
+  if (closeTradeTicketButton) closeTradeTicketButton.addEventListener("click", closeTradeTicketModal);
+  const newTradeButton = $("#newTradeBtn");
+  if (newTradeButton) newTradeButton.addEventListener("click", openNewTradeTicket);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!$("#tradeTicketModal")?.classList.contains("hidden")) {
+      closeTradeTicketModal();
+      return;
+    }
+    if (document.body.dataset.authPage === "true" && activeAccount && document.body.dataset.authRequired !== "true") {
+      closeLoginPage();
+    }
+  });
+
   $$(".nav-tab").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!activeAccount) {
+        showLoginPage("cloud", true);
+        return;
+      }
       $$(".nav-tab").forEach((tab) => tab.classList.remove("active"));
       button.classList.add("active");
       $$(".view").forEach((view) => view.classList.remove("active"));
@@ -4742,6 +7413,15 @@ function bindEvents() {
       equityPeriod = button.dataset.period || "day";
       $$(".chart-period .segment").forEach((segment) => segment.classList.remove("active"));
       button.classList.add("active");
+      rerenderAnalyticsSoon(0);
+    });
+  });
+
+  $$(".period-pl-period .segment").forEach((button) => {
+    button.addEventListener("click", () => {
+      periodPlPeriod = ["day", "month", "year"].includes(button.dataset.periodPlPeriod) ? button.dataset.periodPlPeriod : "day";
+      savePeriodPlPeriod();
+      updatePeriodPlPeriodControls();
       rerenderAnalyticsSoon(0);
     });
   });
@@ -4802,6 +7482,7 @@ function bindEvents() {
       pendingMt5OrderId = "";
     }
     resetTradeForm();
+    closeTradeTicketModal();
     render();
     showToast("Trade saved.");
   });
@@ -4817,6 +7498,64 @@ function bindEvents() {
     renderStrategies();
     showToast("Strategy saved.");
   });
+
+  const setupPlaybookList = $("#setupPlaybookList");
+  if (setupPlaybookList) {
+    setupPlaybookList.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-setup-action='strategy']");
+      if (!button) return;
+      createOrUpdateStrategyFromSetup(button.dataset.setup || "");
+    });
+  }
+
+  const setupSearchInput = $("#setupPlaybookSearch");
+  if (setupSearchInput) {
+    setupSearchInput.addEventListener("input", (event) => {
+      setupPlaybookSearch = event.target.value || "";
+      renderSetupPlaybook();
+    });
+  }
+
+  const setupStatusFilter = $("#setupPlaybookStatus");
+  if (setupStatusFilter) {
+    setupStatusFilter.addEventListener("change", (event) => {
+      setupPlaybookStatus = event.target.value || "all";
+      renderSetupPlaybook();
+    });
+  }
+
+  const setupTypeFilter = $("#setupPlaybookType");
+  if (setupTypeFilter) {
+    setupTypeFilter.addEventListener("change", (event) => {
+      setupPlaybookType = event.target.value || "all";
+      renderSetupPlaybook();
+    });
+  }
+
+  const strategySearchInput = $("#strategySearch");
+  if (strategySearchInput) {
+    strategySearchInput.addEventListener("input", (event) => {
+      strategySearch = event.target.value || "";
+      renderStrategies();
+    });
+  }
+
+  const strategyQualityFilter = $("#strategyQualityFilter");
+  if (strategyQualityFilter) {
+    strategyQualityFilter.addEventListener("change", (event) => {
+      strategyQuality = event.target.value || "all";
+      renderStrategies();
+    });
+  }
+
+  const strategySetupTypeFilter = $("#strategySetupTypeFilter");
+  if (strategySetupTypeFilter) {
+    strategySetupType = strategySetupTypeFilter.value || "all";
+    strategySetupTypeFilter.addEventListener("change", (event) => {
+      strategySetupType = event.target.value || "all";
+      renderStrategies();
+    });
+  }
 
   $("#tradeTable").addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
@@ -4843,6 +7582,11 @@ function bindEvents() {
     const strategy = strategies.find((item) => item.id === button.dataset.id);
     if (!strategy) return;
 
+    if (button.dataset.strategyAction === "refresh") {
+      createOrUpdateStrategyFromSetup(strategy.linkedSetup || strategy.name);
+      return;
+    }
+
     if (button.dataset.strategyAction === "edit") {
       fillStrategyForm(strategy);
     }
@@ -4855,7 +7599,37 @@ function bindEvents() {
     }
   });
 
-  ["searchInput", "historyStartFilter", "historyEndFilter", "outcomeFilter", "setupFilter"].forEach((id) => {
+  const openSetupStrategyButton = $("#openSetupStrategyBtn");
+  if (openSetupStrategyButton) openSetupStrategyButton.addEventListener("click", openCurrentSetupInStrategyBuilder);
+
+  const historyPeriodFilter = $("#historyPeriodFilter");
+  if (historyPeriodFilter) {
+    historyPeriodFilter.addEventListener("change", (event) => {
+      historyRange = event.target.value || "all";
+      if (historyRange === "custom") {
+        historyCustomStart = $("#historyStartFilter")?.value || "";
+        historyCustomEnd = $("#historyEndFilter")?.value || "";
+      }
+      updateHistoryFilterControls();
+      saveHistoryFilterSettings();
+      renderTable();
+    });
+  }
+
+  ["historyStartFilter", "historyEndFilter"].forEach((id) => {
+    const input = $(`#${id}`);
+    if (!input) return;
+    input.addEventListener("input", () => {
+      historyRange = "custom";
+      historyCustomStart = $("#historyStartFilter")?.value || "";
+      historyCustomEnd = $("#historyEndFilter")?.value || "";
+      saveHistoryFilterSettings();
+      updateHistoryFilterControls();
+      renderTable();
+    });
+  });
+
+  ["searchInput", "outcomeFilter", "setupFilter"].forEach((id) => {
     $(`#${id}`).addEventListener("input", renderTable);
   });
 
@@ -4872,6 +7646,28 @@ function bindEvents() {
   });
 
   const form = $("#tradeForm");
+  ["setup", "positive", "mistake"].forEach((name) => {
+    const select = form.elements[name];
+    if (!select) return;
+    select.dataset.previousValue = select.value;
+    select.addEventListener("focus", () => {
+      select.dataset.previousValue = select.value;
+    });
+    select.addEventListener("change", () => {
+      if (select.value === customChoiceValue) {
+        addCustomTradeChoice(name);
+        return;
+      }
+      select.dataset.previousValue = select.value;
+      if (name === "setup") syncSetupTypeFromSetup();
+      if (name === "mistake") applyScoreEngine();
+    });
+  });
+  scoreDriverNames.forEach((name) => {
+    if (!form.elements[name]) return;
+    form.elements[name].addEventListener("change", applyScoreEngine);
+  });
+
   ["date", "openTime"].forEach((name) => {
     const handler = () => syncSessionFromOpenTime();
     form.elements[name].addEventListener("input", handler);
@@ -4915,8 +7711,9 @@ function bindEvents() {
     renderReportAnalysis(getAnalyticsTrades());
   });
 
-  $("#tradeForm").elements.confidence.addEventListener("input", updateSliderOutputs);
-  $("#tradeForm").elements.discipline.addEventListener("input", updateSliderOutputs);
+  $("#tradeForm").elements.setupScore.addEventListener("input", applyScoreEngine);
+  $("#tradeForm").elements.confidence.addEventListener("input", applyScoreEngine);
+  $("#tradeForm").elements.discipline.addEventListener("input", applyScoreEngine);
   $("#resetTradeBtn").addEventListener("click", resetTradeForm);
   $("#resetStrategyBtn").addEventListener("click", resetStrategyForm);
 
@@ -4948,12 +7745,11 @@ function bindEvents() {
     showToast("Demo trades loaded.");
   });
 
-  $("#exportJsonBtn").addEventListener("click", () => {
-    const content = JSON.stringify({ trades, strategies, customPairs, settings, exportedAt: new Date().toISOString() }, null, 2);
-    downloadFile("fx-edge-journal.json", content, "application/json");
-  });
+  $("#exportJsonBtn").addEventListener("click", exportJsonBackup);
 
   $("#exportCsvBtn").addEventListener("click", exportCsv);
+  const exportFilteredCsvButton = $("#exportFilteredCsvBtn");
+  if (exportFilteredCsvButton) exportFilteredCsvButton.addEventListener("click", exportFilteredCsv);
   $("#importBtn").addEventListener("click", () => $("#importFile").click());
   $("#importFile").addEventListener("change", (event) => {
     const file = event.target.files[0];
@@ -4961,17 +7757,77 @@ function bindEvents() {
     event.target.value = "";
   });
 
+  const checklistView = $("#checklistView");
+  if (checklistView) {
+    checklistView.addEventListener("change", (event) => {
+      const input = event.target.closest("[data-rule-group] input[type='checkbox'][data-rule-key]");
+      if (input) updateChecklistInput(input);
+    });
+  }
+
+  const dailyReviewForm = $("#dailyReviewForm");
+  if (dailyReviewForm) {
+    dailyReviewForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveDailyReviewFromForm();
+    });
+  }
+
+  const dailyReviewDate = $("#dailyReviewDate");
+  if (dailyReviewDate) {
+    dailyReviewDate.addEventListener("change", (event) => {
+      fillDailyReviewForm(event.target.value || localDateKey());
+      renderChecklistDashboard();
+    });
+  }
+
+  const resetDailyReviewButton = $("#resetDailyReviewBtn");
+  if (resetDailyReviewButton) {
+    resetDailyReviewButton.addEventListener("click", () => {
+      fillDailyReviewForm($("#dailyReviewDate")?.value || localDateKey());
+      showToast("Daily review form reset.");
+    });
+  }
+
+  const refreshDailyReviewButton = $("#refreshDailyReviewBtn");
+  if (refreshDailyReviewButton) {
+    refreshDailyReviewButton.addEventListener("click", () => {
+      fillDailyReviewFromJournal($("#dailyReviewDate")?.value || localDateKey());
+      showToast("Daily review refreshed from journal.");
+    });
+  }
+
+  const exportDailyReviewsButton = $("#exportDailyReviewsBtn");
+  if (exportDailyReviewsButton) {
+    exportDailyReviewsButton.addEventListener("click", exportDailyReviewsCsv);
+  }
+
+  const dailyReviewHistory = $("#dailyReviewHistory");
+  if (dailyReviewHistory) {
+    dailyReviewHistory.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-daily-review-date]");
+      if (!button) return;
+      fillDailyReviewForm(button.dataset.dailyReviewDate);
+    });
+  }
+
   $("#useProfileBtn").addEventListener("click", () => {
     const profile = $("#bestProfile").dataset;
     if (!profile.setup) {
       showToast("Record trades before creating a profile strategy.");
       return;
     }
-    const form = $("#strategyForm");
-    form.elements.name.value = `${profile.session} ${profile.pair} ${profile.setup}`.trim();
-    form.elements.market.value = `${profile.pair} during ${profile.session}`;
-    form.elements.trigger.value = profile.setup;
-    form.elements.reviewRule.value = "Compare execution with the best trade profile after every trade.";
+    const setupProfile = setupProfileFromTrades(
+      profile.setup,
+      trades.filter((trade) => trade.setup === profile.setup && trade.pair === profile.pair && trade.session === profile.session)
+    );
+    fillStrategyForm({
+      ...strategyDraftForSetupProfile(setupProfile),
+      name: `${profile.session} ${profile.pair} ${profile.setup}`.trim(),
+      market: `${profile.pair} during ${profile.session}`,
+      trigger: profile.setup,
+      reviewRule: "Compare execution with the best trade profile after every trade."
+    });
     document.querySelector('[data-view="strategy"]').click();
     showToast("Profile copied into the strategy builder.");
   });
@@ -4983,7 +7839,9 @@ function bindEvents() {
 function bootstrap() {
   initSupabaseClient();
   initAccountSession();
+  applyThemePreference();
   renderPairOptions(defaultPair);
+  renderTradeChoiceOptions();
   renderMarketChartOptions(marketChartPair);
   bindEvents();
   resetTradeForm();
@@ -4993,7 +7851,7 @@ function bootstrap() {
   renderDstWidget();
   setInterval(renderDstWidget, 60000);
   if (!activeAccount) {
-    showAuthOverlay(accounts.some(canLocalSignIn) ? "login" : "cloud", true);
+    showAuthOverlay("cloud", true);
   }
   registerServiceWorker();
   initCloudSession();
