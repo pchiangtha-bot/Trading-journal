@@ -3284,13 +3284,15 @@ td {
 }
 
 .profile-detail-grid,
-.profile-action-grid {
+.profile-action-grid,
+.profile-snapshot-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-.profile-detail-grid article {
+.profile-detail-grid article,
+.profile-snapshot-grid article {
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--border);
@@ -3298,7 +3300,17 @@ td {
   background: var(--surface-strong);
 }
 
-.profile-detail-grid span {
+.profile-snapshot-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--teal) 24%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--teal-soft) 34%, var(--surface));
+}
+
+.profile-detail-grid span,
+.profile-snapshot-grid span {
   display: block;
   color: var(--muted);
   font-size: 0.76rem;
@@ -3306,13 +3318,19 @@ td {
   text-transform: uppercase;
 }
 
-.profile-detail-grid strong {
+.profile-detail-grid strong,
+.profile-snapshot-grid strong {
   display: block;
   margin-top: 5px;
   color: var(--ink);
   font-size: 0.98rem;
   line-height: 1.25;
   overflow-wrap: anywhere;
+}
+
+.profile-snapshot-grid strong {
+  color: var(--teal);
+  font-size: 1.12rem;
 }
 
 .profile-tool-section,
@@ -3332,6 +3350,18 @@ td {
   margin: -2px 0 0;
   color: var(--muted);
   font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.profile-transfer-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 34%, var(--border));
+  border-radius: var(--radius);
+  color: color-mix(in srgb, var(--amber) 72%, var(--ink));
+  background: color-mix(in srgb, var(--amber) 10%, var(--surface));
+  font-size: 0.82rem;
+  font-weight: 750;
   line-height: 1.35;
 }
 
@@ -3564,6 +3594,7 @@ td {
   .profile-name-form,
   .profile-detail-grid,
   .profile-action-grid,
+  .profile-snapshot-grid,
   .rule-checklist.two-column,
   .rule-dashboard,
   .daily-template-grid,

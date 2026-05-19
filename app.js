@@ -936,6 +936,21 @@ function profileDeviceLabel() {
   return `This browser · ${shortId}`;
 }
 
+function profileDataSnapshot(source = {}) {
+  const sourceSettings = source.settings && typeof source.settings === "object" ? source.settings : settings;
+  return {
+    trades: Array.isArray(source.trades) ? source.trades.length : trades.length,
+    strategies: Array.isArray(source.strategies) ? source.strategies.length : strategies.length,
+    dailyReviews: Array.isArray(sourceSettings?.dailyReviews) ? sourceSettings.dailyReviews.length : 0,
+    customPairs: Array.isArray(source.customPairs || source.custom_pairs) ? (source.customPairs || source.custom_pairs).length : customPairs.length,
+    profileName: source.profileName || source.profile_name || activeAccount?.name || "Cloud profile"
+  };
+}
+
+function profileSnapshotLine(snapshot) {
+  return `${snapshot.trades} trades, ${snapshot.strategies} strategies, ${snapshot.dailyReviews} daily reviews, ${snapshot.customPairs} custom pairs`;
+}
+
 function isProfileManagementOpen() {
   return !$("#profileManagementModal")?.classList.contains("hidden");
 }
@@ -986,6 +1001,15 @@ function syncProfileManagementUi() {
   if (sync) sync.textContent = syncText;
   const device = $("#profileDeviceValue");
   if (device) device.textContent = profileDeviceLabel();
+  const snapshot = profileDataSnapshot();
+  const tradeCount = $("#profileTradeCountValue");
+  if (tradeCount) tradeCount.textContent = snapshot.trades;
+  const strategyCount = $("#profileStrategyCountValue");
+  if (strategyCount) strategyCount.textContent = snapshot.strategies;
+  const dailyReviewCount = $("#profileDailyReviewCountValue");
+  if (dailyReviewCount) dailyReviewCount.textContent = snapshot.dailyReviews;
+  const pairCount = $("#profilePairCountValue");
+  if (pairCount) pairCount.textContent = snapshot.customPairs;
 
   const saveButton = $("#profileNameForm button[type='submit']");
   if (saveButton) saveButton.disabled = !activeAccount;
@@ -2555,6 +2579,20 @@ async function openCloudProfile(options = {}) {
   }
 }
 
+async function fetchCloudTransferTargetSnapshot() {
+  if (!supabaseClient || !cloudUser) return null;
+  const { data, error } = await withCloudTimeout(
+    supabaseClient
+      .from(cloudProfileTable)
+      .select("profile_name,trades,strategies,custom_pairs,settings,updated_at")
+      .eq("user_id", cloudUser.id)
+      .maybeSingle(),
+    "Cloud transfer check timed out. Try again when the connection is stable."
+  );
+  if (error) throw error;
+  return data ? profileDataSnapshot(data) : null;
+}
+
 async function migrateActiveAccountToCloud() {
   if (!cloudUser) {
     showAuthOverlay("cloud", false);
@@ -2569,10 +2607,38 @@ async function migrateActiveAccountToCloud() {
     return;
   }
 
-  const ok = confirm("Upload this local profile to your Supabase cloud journal? This replaces the current cloud journal for this email.");
-  if (!ok) return;
-
   const snapshot = currentJournalSnapshot(activeAccount.name);
+  const localSummary = profileDataSnapshot(snapshot);
+  let cloudSummary = null;
+  try {
+    setCloudStatus("Checking", "Checking existing cloud journal before transfer.", "pending");
+    cloudSummary = await fetchCloudTransferTargetSnapshot();
+  } catch (error) {
+    setCloudStatus("Error", friendlyCloudError(error), "error");
+    showToast(friendlyCloudError(error));
+    return;
+  }
+
+  const targetLine = cloudSummary
+    ? `${cloudSummary.profileName}: ${profileSnapshotLine(cloudSummary)}`
+    : "No cloud journal exists yet for this account.";
+  const confirmation = prompt(
+    [
+      `Transfer local data to ${cloudUser.email || "this cloud account"}?`,
+      "",
+      `Local source: ${localSummary.profileName}: ${profileSnapshotLine(localSummary)}`,
+      `Cloud target now: ${targetLine}`,
+      "",
+      "This will replace the cloud journal for this signed-in account.",
+      'Type "TRANSFER" to continue.'
+    ].join("\n")
+  );
+  if (confirmation !== "TRANSFER") {
+    setCloudStatus("Ready", "Transfer cancelled. No cloud data was changed.", "ready");
+    showToast("Transfer cancelled.");
+    return;
+  }
+
   try {
     await upsertCloudSnapshot(snapshot, "migration");
     const account = ensureCloudAccount(cloudUser);
@@ -7072,6 +7138,7 @@ function importJson(file) {
       renderMarketChartOptions(marketChartPair);
       render();
       syncAccountUi();
+      if (isActiveCloudProfile()) queueCloudSave("import");
       showToast("Import complete.");
     } catch (error) {
       showToast("Import failed. Use a JSON export from this app.");

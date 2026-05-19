@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=98">
+  <link rel="stylesheet" href="styles.css?v=99">
 </head>
 <body>
   <div class="app-shell">
@@ -1426,6 +1426,31 @@
         </article>
       </div>
 
+      <section class="profile-snapshot-section" aria-labelledby="profile-snapshot-title">
+        <div>
+          <p class="eyebrow">Journal Snapshot</p>
+          <h3 id="profile-snapshot-title">Data On This Device</h3>
+        </div>
+        <div class="profile-snapshot-grid">
+          <article>
+            <span>Trades</span>
+            <strong id="profileTradeCountValue">0</strong>
+          </article>
+          <article>
+            <span>Strategies</span>
+            <strong id="profileStrategyCountValue">0</strong>
+          </article>
+          <article>
+            <span>Daily Reviews</span>
+            <strong id="profileDailyReviewCountValue">0</strong>
+          </article>
+          <article>
+            <span>Custom Pairs</span>
+            <strong id="profilePairCountValue">0</strong>
+          </article>
+        </div>
+      </section>
+
       <section class="profile-tool-section" aria-labelledby="profile-tools-title">
         <div>
           <p class="eyebrow">Data Tools</p>
@@ -1442,7 +1467,7 @@
           </button>
           <button class="tool-button" type="button" id="profileMigrateBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg>
-            Transfer To Cloud
+            Transfer Local Data To Cloud
           </button>
           <button class="tool-button" type="button" id="profileExportJsonBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
@@ -1458,6 +1483,7 @@
           </button>
         </div>
         <p class="profile-helper-text" id="profileCloudHelp">Use Cloud Profile loads the synced journal for your signed-in account.</p>
+        <p class="profile-transfer-warning">Transfer replaces the cloud journal for the signed-in Google/email account. Export a backup first if you are unsure.</p>
       </section>
 
       <section class="profile-danger-section" aria-labelledby="profile-session-title">
@@ -1552,6 +1578,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=98"></script>
+  <script src="app.js?v=99"></script>
 </body>
 </html>
