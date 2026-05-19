@@ -469,6 +469,7 @@ let cloudSaveTimer = null;
 let isApplyingCloudSnapshot = false;
 let cloudClientId = "";
 let mt5DetectedOrders = [];
+let mt5BridgeTokens = [];
 let mt5InboxState = { kind: "idle", message: "" };
 let mt5RealtimeHiddenKeys = new Set();
 let pendingMt5OrderId = "";
@@ -1045,6 +1046,8 @@ function syncProfileManagementUi() {
   if (importJsonButton) importJsonButton.disabled = !activeAccount;
   const exportCsvButton = $("#profileExportCsvBtn");
   if (exportCsvButton) exportCsvButton.disabled = !activeAccount || !trades.length;
+  const refreshBridgeTokensButton = $("#refreshBridgeTokensBtn");
+  if (refreshBridgeTokensButton) refreshBridgeTokensButton.disabled = !signedInCloud || !supabaseClient;
   const signOutButton = $("#profileSignOutBtn");
   if (signOutButton) signOutButton.disabled = !activeAccount && !signedInCloud;
 }
@@ -1151,6 +1154,23 @@ function showMainView(view = "journal") {
   document.body.dataset.authPage = "false";
   document.body.dataset.authRequired = "false";
   syncLoginCloseControl();
+}
+
+function isMobileNavigationLayout() {
+  return window.matchMedia?.("(max-width: 1180px)")?.matches || window.innerWidth <= 1180;
+}
+
+function mobileNavigationTarget(view = "journal") {
+  if (view === "journal") return $("#tradeHistoryPanel") || $("#journalView");
+  return $(`#${view}View`) || $(".workspace");
+}
+
+function scrollMobileNavigationTarget(view = "journal") {
+  if (!isMobileNavigationLayout()) return;
+  window.setTimeout(() => {
+    const target = mobileNavigationTarget(view);
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 80);
 }
 
 function closeLoginPage() {
@@ -1469,6 +1489,90 @@ function withCloudTimeout(task, message = "Cloud request timed out. Check Supaba
 function setMt5InboxState(kind = "idle", message = "", extra = {}) {
   mt5InboxState = { kind, message, ...extra };
   renderMt5Inbox();
+}
+
+function formatNullableDateTime(value) {
+  return value ? formatDateTime(value) : "Never";
+}
+
+function renderBridgeTokenManager() {
+  const list = $("#bridgeTokenList");
+  if (!list) return;
+  if (!cloudUser) {
+    mt5BridgeTokens = [];
+    list.innerHTML = '<p class="profile-helper-text">Sign in to cloud to manage MT5 bridge tokens.</p>';
+    return;
+  }
+
+  if (!mt5BridgeTokens.length) {
+    list.innerHTML = '<p class="profile-helper-text">No bridge tokens yet. Generate a PC or Mobile token from the MT5 Bridge panel.</p>';
+    return;
+  }
+
+  list.innerHTML = mt5BridgeTokens
+    .map((token) => {
+      const revoked = Boolean(token.revoked_at);
+      const label = token.label || "MT5 bridge token";
+      const created = formatNullableDateTime(token.created_at);
+      const lastUsed = formatNullableDateTime(token.last_used_at);
+      return `
+        <article class="bridge-token-card ${revoked ? "revoked" : ""}">
+          <div>
+            <strong>${escapeHtml(label)}</strong>
+            <span>Created ${escapeHtml(created)} · Last used ${escapeHtml(lastUsed)}</span>
+            <span class="bridge-token-status ${revoked ? "revoked" : ""}">${revoked ? "Revoked" : "Active"}</span>
+          </div>
+          <button class="mini-button text-mini danger" type="button" data-token-action="revoke" data-id="${escapeHtml(token.id)}" ${revoked ? "disabled" : ""}>Revoke</button>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+async function fetchMt5BridgeTokens(options = {}) {
+  const { silent = false } = options;
+  if (!supabaseClient || !cloudUser) {
+    mt5BridgeTokens = [];
+    renderBridgeTokenManager();
+    return;
+  }
+  try {
+    const { data, error } = await withCloudTimeout(
+      supabaseClient
+        .from(mt5TokenTable)
+        .select("id,label,created_at,last_used_at,revoked_at")
+        .eq("user_id", cloudUser.id)
+        .order("created_at", { ascending: false }),
+      "Bridge token manager timed out. Check Supabase connection and try again."
+    );
+    if (error) throw error;
+    mt5BridgeTokens = Array.isArray(data) ? data : [];
+    renderBridgeTokenManager();
+  } catch (error) {
+    renderBridgeTokenManager();
+    if (!silent) showToast(friendlyCloudError(error));
+  }
+}
+
+async function revokeMt5BridgeToken(tokenId) {
+  if (!supabaseClient || !cloudUser || !tokenId) return;
+  const token = mt5BridgeTokens.find((item) => item.id === tokenId);
+  const label = token?.label || "this MT5 bridge token";
+  const ok = confirm(`Revoke ${label}? Any MT5 PC, phone, VPS, or relay using it will stop sending orders.`);
+  if (!ok) return;
+  const revokedAt = new Date().toISOString();
+  const { error } = await supabaseClient
+    .from(mt5TokenTable)
+    .update({ revoked_at: revokedAt })
+    .eq("user_id", cloudUser.id)
+    .eq("id", tokenId);
+  if (error) {
+    showToast(friendlyCloudError(error));
+    return;
+  }
+  mt5BridgeTokens = mt5BridgeTokens.map((item) => item.id === tokenId ? { ...item, revoked_at: revokedAt } : item);
+  renderBridgeTokenManager();
+  showToast("Bridge token revoked.");
 }
 
 function setCloudStatus(label, detail = "", tone = "muted") {
@@ -1897,6 +2001,7 @@ async function generateMt5BridgeToken(source = "desktop") {
     output.focus();
     output.select();
   }
+  fetchMt5BridgeTokens({ silent: true }).catch(() => {});
   showToast(isMobile ? "MT5 mobile relay token created. Save it now; it is shown once." : "MT5 bridge token created. Save it now; it is shown once.");
 }
 
@@ -2424,6 +2529,34 @@ async function ignoreAlreadyRecordedMt5Orders() {
   showToast("Ignored " + ids.length + " already recorded MT5 " + (ids.length === 1 ? "order." : "orders."));
 }
 
+async function ignoreVisibleMt5Orders() {
+  if (!supabaseClient || !cloudUser) return;
+  const ids = mt5DetectedOrders.map((order) => order.id).filter(Boolean);
+  if (!ids.length) {
+    showToast("No visible MT5 orders to ignore.");
+    return;
+  }
+  const ok = confirm(`Ignore all ${ids.length} visible MT5 ${ids.length === 1 ? "order" : "orders"}? Use Display History to review them again later.`);
+  if (!ok) return;
+
+  mt5DetectedOrders.forEach(hideMt5OrderFromRealtime);
+  const { error } = await supabaseClient
+    .from(mt5OrderTable)
+    .update({ status: "ignored", updated_at: new Date().toISOString() })
+    .eq("user_id", cloudUser.id)
+    .in("id", ids);
+
+  if (error) {
+    showToast(friendlyCloudError(error));
+    return;
+  }
+
+  mt5DetectedOrders = [];
+  mt5InboxState = { kind: "empty", message: "Ignored visible MT5 orders are hidden. Use Display History to review the full period again." };
+  renderMt5Inbox();
+  showToast(`Ignored ${ids.length} visible MT5 ${ids.length === 1 ? "order." : "orders."}`);
+}
+
 function mt5OrderInboxStatus(order) {
   const alreadyRecorded = Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order));
   const status = String(order.status || "new").toLowerCase();
@@ -2497,11 +2630,17 @@ function renderMt5Inbox() {
   const panel = $("#mt5InboxPanel");
   const list = $("#mt5InboxList");
   if (!panel || !list) return;
+  const ignoreAllButton = $("#ignoreAllMt5OrdersBtn");
   const ignoreRecordedButton = $("#ignoreRecordedMt5OrdersBtn");
   const hasOrders = Boolean(mt5DetectedOrders.length);
   const recordedCount = mt5DetectedOrders.filter((order) => Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order))).length;
   const showPanel = Boolean(cloudUser && (hasOrders || mt5InboxState.kind !== "idle"));
   panel.classList.toggle("hidden", !showPanel);
+  if (ignoreAllButton) {
+    ignoreAllButton.classList.toggle("hidden", !showPanel || !hasOrders);
+    ignoreAllButton.disabled = !hasOrders;
+    ignoreAllButton.innerHTML = `${iconMarkup("trash")} ${hasOrders ? `Ignore all (${mt5DetectedOrders.length})` : "Ignore all"}`;
+  }
   if (ignoreRecordedButton) {
     ignoreRecordedButton.classList.toggle("hidden", !showPanel || recordedCount === 0);
     ignoreRecordedButton.disabled = recordedCount === 0;
@@ -2671,6 +2810,7 @@ async function handleCloudSessionChange(session, options = {}) {
       mt5OrderSubscription = null;
     }
     mt5DetectedOrders = [];
+    mt5BridgeTokens = [];
     setCloudStatus(
       activeCloudAccount ? "Reconnect" : "Ready",
       activeCloudAccount
@@ -2679,12 +2819,14 @@ async function handleCloudSessionChange(session, options = {}) {
       activeCloudAccount ? "pending" : "ready"
     );
     renderMt5Inbox();
+    renderBridgeTokenManager();
     return;
   }
 
   ensureCloudAccount(cloudUser);
   subscribeCloudProfile();
   subscribeMt5Orders();
+  fetchMt5BridgeTokens({ silent: true }).catch(() => {});
   fetchMt5DetectedOrders({ silent: true }).catch(() => {});
   const keepSignedIn = options.keepSignedIn ?? cloudSessionShouldPersist();
   if (!activeAccount || (isCloudAccount(activeAccount) && activeAccount.cloudUserId === cloudUser.id)) {
@@ -2854,9 +2996,11 @@ function openProfileManagement() {
     return;
   }
   syncProfileManagementUi();
+  renderBridgeTokenManager();
   $("#profileManagementModal")?.classList.remove("hidden");
   document.body.classList.add("modal-open");
   $("#profileDisplayNameInput")?.focus();
+  if (cloudUser) fetchMt5BridgeTokens({ silent: true }).catch(() => {});
 }
 
 function closeProfileManagement() {
@@ -7176,9 +7320,11 @@ function showToast(message) {
 
 function mt5AppLaunchTarget() {
   const userAgent = navigator.userAgent || "";
-  if (/Android/i.test(userAgent)) return "intent://#Intent;scheme=mt5;package=net.metaquotes.metatrader5;end";
-  if (/iPhone|iPad|iPod/i.test(userAgent)) return "mt5://";
-  return "mt5://";
+  if (/Android/i.test(userAgent)) {
+    return "intent://open#Intent;scheme=metatrader5;package=net.metaquotes.metatrader5;S.browser_fallback_url=https%3A%2F%2Fwww.metatrader5.com%2Fen%2Fdownload;end";
+  }
+  if (/iPhone|iPad|iPod/i.test(userAgent)) return "metatrader5://";
+  return "metatrader5://";
 }
 
 function openMt5Application(event) {
@@ -7203,7 +7349,12 @@ function openMt5Application(event) {
   window.addEventListener("blur", clearFallback, { once: true });
   document.addEventListener("visibilitychange", handleVisibilityChange);
   fallbackTimer = window.setTimeout(() => {
-    if (!leftPage) window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+    if (!leftPage) {
+      if (/Windows/i.test(navigator.userAgent || "")) {
+        showToast("Browsers cannot open terminal64.exe directly. If MT5 does not open, use the download/fallback page or register an MT5 app protocol.");
+      }
+      window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+    }
     window.removeEventListener("blur", clearFallback);
     document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, 900);
@@ -7254,6 +7405,18 @@ function bindEvents() {
     profileSignOutButton.addEventListener("click", async () => {
       await handleAccountLogout();
       closeProfileManagement();
+    });
+  }
+
+  const refreshBridgeTokensButton = $("#refreshBridgeTokensBtn");
+  if (refreshBridgeTokensButton) refreshBridgeTokensButton.addEventListener("click", () => fetchMt5BridgeTokens());
+
+  const bridgeTokenList = $("#bridgeTokenList");
+  if (bridgeTokenList) {
+    bridgeTokenList.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-token-action]");
+      if (!button) return;
+      if (button.dataset.tokenAction === "revoke") revokeMt5BridgeToken(button.dataset.id);
     });
   }
 
@@ -7401,6 +7564,9 @@ function bindEvents() {
   const ignoreRecordedMt5OrdersButton = $("#ignoreRecordedMt5OrdersBtn");
   if (ignoreRecordedMt5OrdersButton) ignoreRecordedMt5OrdersButton.addEventListener("click", ignoreAlreadyRecordedMt5Orders);
 
+  const ignoreAllMt5OrdersButton = $("#ignoreAllMt5OrdersBtn");
+  if (ignoreAllMt5OrdersButton) ignoreAllMt5OrdersButton.addEventListener("click", ignoreVisibleMt5Orders);
+
   const mt5InboxList = $("#mt5InboxList");
   if (mt5InboxList) {
     mt5InboxList.addEventListener("click", (event) => {
@@ -7452,6 +7618,7 @@ function bindEvents() {
       $("#viewTitle").textContent = button.textContent.trim();
       render();
       if (button.dataset.view === "analytics") rerenderAnalyticsSoon(60);
+      scrollMobileNavigationTarget(button.dataset.view);
     });
   });
 

@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=99">
+  <link rel="stylesheet" href="styles.css?v=100">
 </head>
 <body>
   <div class="app-shell">
@@ -400,7 +400,11 @@
               <p class="eyebrow">MT5 Automation</p>
               <h3 id="mt5-inbox-title">Detected Closed Positions</h3>
             </div>
-            <div class="mt5-inbox-header-actions">
+          <div class="mt5-inbox-header-actions">
+              <button class="tool-button hidden" type="button" id="ignoreAllMt5OrdersBtn">
+                <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M9 11v6M15 11v6M6 6l1 15h10l1-15"/></svg>
+                Ignore all
+              </button>
               <button class="tool-button hidden" type="button" id="ignoreRecordedMt5OrdersBtn">
                 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M9 11v6M15 11v6M6 6l1 15h10l1-15"/></svg>
                 Ignore recorded
@@ -702,7 +706,7 @@
           </section>
           </div>
 
-          <section class="panel table-panel" aria-labelledby="journal-title">
+          <section class="panel table-panel" id="tradeHistoryPanel" aria-labelledby="journal-title">
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Journal</p>
@@ -1486,6 +1490,20 @@
         <p class="profile-transfer-warning">Transfer replaces the cloud journal for the signed-in Google/email account. Export a backup first if you are unsure.</p>
       </section>
 
+      <section class="profile-token-section" aria-labelledby="profile-token-title">
+        <div class="panel-header compact">
+          <div>
+            <p class="eyebrow">MT5 Security</p>
+            <h3 id="profile-token-title">Bridge Token Manager</h3>
+          </div>
+          <button class="mini-button text-mini" type="button" id="refreshBridgeTokensBtn">Refresh</button>
+        </div>
+        <p class="profile-helper-text">Tokens are account-specific. Revoke tokens you no longer use on a PC, phone, VPS, or relay.</p>
+        <div class="bridge-token-list" id="bridgeTokenList">
+          <p class="profile-helper-text">Sign in to cloud to manage MT5 bridge tokens.</p>
+        </div>
+      </section>
+
       <section class="profile-danger-section" aria-labelledby="profile-session-title">
         <div>
           <p class="eyebrow">Session</p>
@@ -1578,6 +1596,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=99"></script>
+  <script src="app.js?v=100"></script>
 </body>
 </html>

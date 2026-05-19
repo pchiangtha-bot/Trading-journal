@@ -1,9 +1,9 @@
-const CACHE_NAME = "fx-edge-journal-v99";
+const CACHE_NAME = "fx-edge-journal-v100";
 const APP_FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=99",
-  "./app.js?v=99",
+  "./styles.css?v=100",
+  "./app.js?v=100",
   "./manifest.webmanifest",
   "./icon.svg"
 ];
