@@ -38,6 +38,26 @@ This app includes a safe MT5 bridge for detecting closed positions. It does not 
 
 When a position fully closes, the Journal page will show it in Detected Closed Positions. Click Record to load broker facts into the Trade Ticket, then type your own Session and Setup before saving.
 
+### Open MT5 From The Market Tools Icon
+
+The Market Tools MT5 icon opens the installed MT5 app on iPhone and Android. On Windows, browsers cannot safely open `terminal64.exe` directly, so the app uses a one-time local protocol named `fxedge-mt5://open`.
+
+Run this once on each Windows PC that should open MT5 from the website. The friendliest path is to open the app, click the Market Tools MT5 icon, then use the MT5 Desktop Setup panel to download `windows/install-fxedge-mt5-protocol.bat`.
+
+If you prefer PowerShell, run this from the project folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\windows\register-fxedge-mt5-protocol.ps1"
+```
+
+If MT5 is installed in a custom folder, pass the exact terminal path:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\windows\register-fxedge-mt5-protocol.ps1" -Mt5Path "C:\Program Files\MetaTrader 5\terminal64.exe"
+```
+
+After that, clicking the MT5 icon should open MT5 directly instead of opening the MetaTrader website.
+
 ### MT5 Mobile Closed-Position Relay
 
 Android and iOS orders use the same Supabase Edge Function and the same Detected Closed Positions inbox. Sign in with Cloud, then open the MT5 Bridge panel and click Mobile to generate a mobile relay token. Use the shown `WebhookUrl`, `Authorization=Bearer ...` header, and JSON template from iOS Shortcuts, an Android HTTP automation app, a broker export/parser, or another trusted relay that can read the closed-position facts and POST them as JSON.

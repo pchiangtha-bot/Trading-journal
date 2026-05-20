@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=100">
+  <link rel="stylesheet" href="styles.css?v=103">
 </head>
 <body>
   <div class="app-shell">
@@ -87,7 +87,7 @@
             <a class="icon-button link-button" href="https://www.tradingview.com/chart/" target="_blank" rel="noopener noreferrer" title="Open TradingView" aria-label="Open TradingView">
               <img class="site-icon" src="https://www.tradingview.com/favicon.ico" alt="" aria-hidden="true">
             </a>
-            <a class="icon-button link-button" href="https://www.metatrader5.com/en/download" target="_blank" rel="noopener noreferrer" title="Open MetaTrader 5" aria-label="Open MetaTrader 5" id="openMt5AppLink" data-fallback-url="https://www.metatrader5.com/en/download">
+            <a class="icon-button link-button" href="metatrader5://" title="Open MetaTrader 5" aria-label="Open MetaTrader 5" id="openMt5AppLink">
               <img class="site-icon" src="https://www.metatrader5.com/favicon.ico" alt="" aria-hidden="true">
               <span class="sr-only">MT5</span>
             </a>
@@ -147,6 +147,7 @@
           <div class="bridge-action-row">
             <button class="mini-button text-mini" type="button" id="generateMt5TokenBtn">PC</button>
             <button class="mini-button text-mini" type="button" id="generateMt5MobileTokenBtn">Mobile</button>
+            <button class="mini-button text-mini" type="button" id="openMt5DesktopSetupBtn">Desktop setup</button>
           </div>
           <div class="history-sync-controls" aria-label="MT5 history sync period">
             <label>
@@ -1517,6 +1518,69 @@
     </section>
   </div>
 
+  <div class="profile-modal hidden" id="mt5DesktopSetupModal" role="dialog" aria-modal="true" aria-labelledby="mt5DesktopSetupTitle">
+    <section class="profile-card panel mt5-setup-card">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Windows Setup</p>
+          <h2 id="mt5DesktopSetupTitle">Open MT5 From FX Edge</h2>
+        </div>
+        <button class="icon-button" type="button" id="closeMt5DesktopSetupBtn" title="Close MT5 setup" aria-label="Close MT5 setup">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="mt5-setup-hero">
+        <div class="mt5-setup-logo" aria-hidden="true">MT5</div>
+        <div>
+          <p class="eyebrow">One-time desktop installer</p>
+          <h3>Connect this browser button to your local MT5 program.</h3>
+          <p>Windows blocks websites from opening `.exe` files directly. This setup registers a safe local link named <strong>fxedge-mt5://open</strong>, then the Market Tools MT5 icon can open your installed `terminal64.exe`.</p>
+        </div>
+      </div>
+
+      <div class="mt5-setup-steps" aria-label="MT5 desktop setup steps">
+        <article>
+          <span>1</span>
+          <strong>Download setup</strong>
+          <p>Save the Windows setup launcher from this app folder.</p>
+        </article>
+        <article>
+          <span>2</span>
+          <strong>Run once</strong>
+          <p>Double-click it, or copy the PowerShell command if Windows asks.</p>
+        </article>
+        <article>
+          <span>3</span>
+          <strong>Mark installed</strong>
+          <p>Return here, mark installed, then use the MT5 icon normally.</p>
+        </article>
+      </div>
+
+      <div class="mt5-setup-command">
+        <label>
+          <span>PowerShell command</span>
+          <textarea id="mt5DesktopSetupCommand" rows="3" readonly></textarea>
+        </label>
+      </div>
+
+      <div class="profile-action-grid mt5-setup-actions">
+        <a class="tool-button" id="downloadMt5DesktopSetupBtn" href="windows/install-fxedge-mt5-protocol.bat" download>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          Download Windows Setup
+        </a>
+        <button class="tool-button" type="button" id="copyMt5DesktopSetupCommandBtn">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z"/><path d="M6 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
+          Copy Command
+        </button>
+        <button class="primary-button" type="button" id="mt5DesktopSetupInstalledBtn">
+          I Already Installed
+        </button>
+      </div>
+      <p class="profile-helper-text">If MT5 is installed in a custom folder, run the PowerShell script with `-Mt5Path` and the exact path to `terminal64.exe`.</p>
+    </section>
+  </div>
+
   <div class="auth-overlay hidden" id="authOverlay" role="dialog" aria-modal="true" aria-labelledby="authTitle">
     <section class="auth-card">
       <div class="panel-header">
@@ -1596,6 +1660,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=100"></script>
+  <script src="app.js?v=103"></script>
 </body>
 </html>

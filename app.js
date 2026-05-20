@@ -7,7 +7,8 @@ const storageKeys = {
   activeAccount: "fx-edge-journal.active-account.v1",
   legacyMigrated: "fx-edge-journal.legacy-migrated.v1",
   cloudClientId: "fx-edge-journal.cloud-client-id.v1",
-  cloudSessionMode: "fx-edge-journal.cloud-session-mode.v1"
+  cloudSessionMode: "fx-edge-journal.cloud-session-mode.v1",
+  mt5DesktopProtocolInstalled: "fx-edge-journal.mt5-desktop-protocol-installed.v1"
 };
 
 const defaultPair = "XAU/USD";
@@ -7320,45 +7321,75 @@ function showToast(message) {
 
 function mt5AppLaunchTarget() {
   const userAgent = navigator.userAgent || "";
+  if (/Windows/i.test(userAgent)) return "fxedge-mt5://open";
   if (/Android/i.test(userAgent)) {
-    return "intent://open#Intent;scheme=metatrader5;package=net.metaquotes.metatrader5;S.browser_fallback_url=https%3A%2F%2Fwww.metatrader5.com%2Fen%2Fdownload;end";
+    return "intent://open#Intent;scheme=metatrader5;package=net.metaquotes.metatrader5;end";
   }
   if (/iPhone|iPad|iPod/i.test(userAgent)) return "metatrader5://";
   return "metatrader5://";
 }
 
+function mt5DesktopSetupCommand() {
+  return 'powershell -ExecutionPolicy Bypass -File ".\\windows\\register-fxedge-mt5-protocol.ps1"';
+}
+
+function isMt5DesktopProtocolInstalled() {
+  return localStorage.getItem(storageKeys.mt5DesktopProtocolInstalled) === "true";
+}
+
+function setMt5DesktopProtocolInstalled(installed) {
+  localStorage.setItem(storageKeys.mt5DesktopProtocolInstalled, installed ? "true" : "false");
+}
+
+function populateMt5DesktopSetupModal() {
+  const command = $("#mt5DesktopSetupCommand");
+  if (command) command.value = mt5DesktopSetupCommand();
+}
+
+function openMt5DesktopSetup() {
+  populateMt5DesktopSetupModal();
+  const modal = $("#mt5DesktopSetupModal");
+  if (!modal) return;
+  if (modal.parentElement !== document.body) document.body.appendChild(modal);
+  modal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+}
+
+function closeMt5DesktopSetup() {
+  $("#mt5DesktopSetupModal")?.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
+function markMt5DesktopSetupInstalled() {
+  setMt5DesktopProtocolInstalled(true);
+  closeMt5DesktopSetup();
+  showToast("MT5 desktop setup marked installed. Click the MT5 icon again to open MT5.");
+}
+
+function copyMt5DesktopSetupCommand() {
+  const command = mt5DesktopSetupCommand();
+  navigator.clipboard?.writeText(command)
+    .then(() => showToast("MT5 desktop setup command copied."))
+    .catch(() => {
+      const field = $("#mt5DesktopSetupCommand");
+      field?.select();
+      showToast("Copy blocked. Select and copy the command manually.");
+    });
+}
+
 function openMt5Application(event) {
   event.preventDefault();
-  const link = event.currentTarget;
-  const fallbackUrl = link?.dataset?.fallbackUrl || "https://www.metatrader5.com/en/download";
   const launchUrl = mt5AppLaunchTarget();
-  let fallbackTimer = 0;
-  let leftPage = false;
-
-  const clearFallback = () => {
-    leftPage = true;
-    if (fallbackTimer) window.clearTimeout(fallbackTimer);
-    window.removeEventListener("blur", clearFallback);
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
-  };
-
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === "hidden") clearFallback();
-  };
-
-  window.addEventListener("blur", clearFallback, { once: true });
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-  fallbackTimer = window.setTimeout(() => {
-    if (!leftPage) {
-      if (/Windows/i.test(navigator.userAgent || "")) {
-        showToast("Browsers cannot open terminal64.exe directly. If MT5 does not open, use the download/fallback page or register an MT5 app protocol.");
-      }
-      window.open(fallbackUrl, "_blank", "noopener,noreferrer");
+  const userAgent = navigator.userAgent || "";
+  if (/Windows/i.test(userAgent)) {
+    if (!isMt5DesktopProtocolInstalled()) {
+      openMt5DesktopSetup();
+      return;
     }
-    window.removeEventListener("blur", clearFallback);
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, 900);
-
+    showToast("Opening MT5 desktop. If nothing happens, run the FX Edge MT5 protocol setup once.");
+  } else {
+    showToast("Opening MetaTrader 5.");
+  }
   window.location.href = launchUrl;
 }
 
@@ -7520,6 +7551,25 @@ function bindEvents() {
 
   const openMt5AppLink = $("#openMt5AppLink");
   if (openMt5AppLink) openMt5AppLink.addEventListener("click", openMt5Application);
+
+  const openMt5DesktopSetupButton = $("#openMt5DesktopSetupBtn");
+  if (openMt5DesktopSetupButton) openMt5DesktopSetupButton.addEventListener("click", openMt5DesktopSetup);
+
+  const closeMt5DesktopSetupButton = $("#closeMt5DesktopSetupBtn");
+  if (closeMt5DesktopSetupButton) closeMt5DesktopSetupButton.addEventListener("click", closeMt5DesktopSetup);
+
+  const mt5DesktopSetupModal = $("#mt5DesktopSetupModal");
+  if (mt5DesktopSetupModal) {
+    mt5DesktopSetupModal.addEventListener("click", (event) => {
+      if (event.target === mt5DesktopSetupModal) closeMt5DesktopSetup();
+    });
+  }
+
+  const copyMt5DesktopSetupCommandButton = $("#copyMt5DesktopSetupCommandBtn");
+  if (copyMt5DesktopSetupCommandButton) copyMt5DesktopSetupCommandButton.addEventListener("click", copyMt5DesktopSetupCommand);
+
+  const mt5DesktopSetupInstalledButton = $("#mt5DesktopSetupInstalledBtn");
+  if (mt5DesktopSetupInstalledButton) mt5DesktopSetupInstalledButton.addEventListener("click", markMt5DesktopSetupInstalled);
 
   const themeSelect = $("#themeSelect");
   if (themeSelect) {
