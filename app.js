@@ -5073,6 +5073,10 @@ function fillDailyReviewForm(date = localDateKey()) {
   renderDailyEvidencePreview(review.date);
 }
 
+function selectedDailyReviewLoadMessage(date = currentDailyReviewDate()) {
+  return dailyReviewByDate(date) ? "Saved daily review loaded." : "No saved review for this date. Journal defaults loaded.";
+}
+
 function fillDailyReviewFromJournal(date = localDateKey()) {
   const form = $("#dailyReviewForm");
   if (!form) return;
@@ -5112,7 +5116,7 @@ function readDailyReviewForm() {
 function renderDailyReviewHistory() {
   const container = $("#dailyReviewHistory");
   if (!container) return;
-  const reviews = normalizeDailyReviews(settings.dailyReviews).slice(0, 6);
+  const reviews = normalizeDailyReviews(settings.dailyReviews).slice(0, 10);
   if (!reviews.length) {
     container.innerHTML = '<p class="rule-copy">No daily reviews saved yet.</p>';
     return;
@@ -5123,15 +5127,76 @@ function renderDailyReviewHistory() {
       return `
       <article class="daily-review-item">
         <div>
-          <strong>${escapeHtml(formatDate(review.date))}</strong>
-          <p>${escapeHtml(review.tradesTaken || "0")} trades, ${escapeHtml(review.winLoss || "No W/L noted")}, ${escapeHtml(review.netPl || "$0.00")}</p>
-          <p>${escapeHtml(review.ruleForTomorrow || "No rule for tomorrow recorded.")}${evidenceCount ? ` · ${escapeHtml(`${evidenceCount} screenshot${evidenceCount === 1 ? "" : "s"}`)}` : ""}</p>
+          <div class="daily-review-date-row">
+            <strong>${escapeHtml(formatDate(review.date))}</strong>
+            <span>${escapeHtml(review.updatedAt ? `Updated ${new Date(review.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Saved")}</span>
+          </div>
+          <p>${escapeHtml(review.tradesTaken || "0")} trades · ${escapeHtml(review.winLoss || "No W/L noted")} · ${escapeHtml(review.netPl || "$0.00")}</p>
+          <p class="daily-review-rule">${escapeHtml(review.ruleForTomorrow || "No rule for tomorrow recorded.")}</p>
+          <div class="daily-review-tags">
+            <span>${escapeHtml(review.followedPlan || "Plan not scored")}</span>
+            <span>${escapeHtml(review.biggestEmotion || "Emotion not noted")}</span>
+            ${evidenceCount ? `<span>${escapeHtml(`${evidenceCount} screenshot${evidenceCount === 1 ? "" : "s"}`)}</span>` : ""}
+          </div>
         </div>
-        <button class="mini-button text-mini" type="button" data-daily-review-date="${escapeHtml(review.date)}">Load</button>
+        <div class="daily-review-item-actions">
+          <button class="mini-button text-mini" type="button" data-daily-review-action="load" data-daily-review-date="${escapeHtml(review.date)}">Edit</button>
+          <button class="mini-button text-mini danger" type="button" data-daily-review-action="delete" data-daily-review-date="${escapeHtml(review.date)}">Delete</button>
+        </div>
       </article>
     `;
     })
     .join("");
+}
+
+function loadDailyReviewForEdit(date) {
+  const key = String(date || "").slice(0, 10);
+  if (!key) return;
+  fillDailyReviewForm(key);
+  const form = $("#dailyReviewForm");
+  form?.scrollIntoView({ behavior: "smooth", block: "start" });
+  showToast(selectedDailyReviewLoadMessage(key));
+}
+
+function deleteDailyReview(date) {
+  const key = String(date || "").slice(0, 10);
+  if (!key) return;
+  if (!window.confirm(`Delete the daily review for ${formatDate(key)}? Chart screenshots for this date will stay available.`)) return;
+  const before = settings.dailyReviews.length;
+  settings.dailyReviews = normalizeDailyReviews(settings.dailyReviews).filter((review) => review.date !== key);
+  if (settings.dailyReviews.length === before) return;
+  saveSettings();
+  if (currentDailyReviewDate() === key) fillDailyReviewForm(key);
+  renderDailyReviewHistory();
+  renderChecklistDashboard();
+  showToast("Daily review deleted. Screenshots for this date are kept unless removed from Chart Evidence.");
+}
+
+function previousDateKey(date = localDateKey()) {
+  const parsed = new Date(`${String(date || localDateKey()).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return "";
+  parsed.setDate(parsed.getDate() - 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function previousDailyReviewBefore(date = localDateKey()) {
+  const selected = String(date || localDateKey()).slice(0, 10);
+  const exactPrevious = dailyReviewByDate(previousDateKey(selected));
+  if (exactPrevious) return exactPrevious;
+  return normalizeDailyReviews(settings.dailyReviews).find((review) => review.date < selected) || null;
+}
+
+function copyPreviousDailyRule() {
+  const form = $("#dailyReviewForm");
+  if (!form) return;
+  const selected = currentDailyReviewDate();
+  const previousReview = previousDailyReviewBefore(selected);
+  if (!previousReview?.ruleForTomorrow) {
+    showToast("No previous rule found to copy.");
+    return;
+  }
+  form.elements.ruleForTomorrow.value = previousReview.ruleForTomorrow;
+  showToast(`Copied rule from ${formatDate(previousReview.date)}.`);
 }
 
 function renderChecklistRules() {
@@ -8324,8 +8389,10 @@ function bindEvents() {
   const dailyReviewDate = $("#dailyReviewDate");
   if (dailyReviewDate) {
     dailyReviewDate.addEventListener("change", (event) => {
-      fillDailyReviewForm(event.target.value || localDateKey());
+      const selectedDate = event.target.value || localDateKey();
+      fillDailyReviewForm(selectedDate);
       renderChecklistDashboard();
+      showToast(selectedDailyReviewLoadMessage(selectedDate));
     });
   }
 
@@ -8343,6 +8410,11 @@ function bindEvents() {
       fillDailyReviewFromJournal($("#dailyReviewDate")?.value || localDateKey());
       showToast("Daily review refreshed from journal.");
     });
+  }
+
+  const copyPreviousDailyRuleButton = $("#copyPreviousDailyRuleBtn");
+  if (copyPreviousDailyRuleButton) {
+    copyPreviousDailyRuleButton.addEventListener("click", copyPreviousDailyRule);
   }
 
   const exportDailyReviewsButton = $("#exportDailyReviewsBtn");
@@ -8378,9 +8450,10 @@ function bindEvents() {
   const dailyReviewHistory = $("#dailyReviewHistory");
   if (dailyReviewHistory) {
     dailyReviewHistory.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-daily-review-date]");
+      const button = event.target.closest("[data-daily-review-action][data-daily-review-date]");
       if (!button) return;
-      fillDailyReviewForm(button.dataset.dailyReviewDate);
+      if (button.dataset.dailyReviewAction === "load") loadDailyReviewForEdit(button.dataset.dailyReviewDate);
+      if (button.dataset.dailyReviewAction === "delete") deleteDailyReview(button.dataset.dailyReviewDate);
     });
   }
 
