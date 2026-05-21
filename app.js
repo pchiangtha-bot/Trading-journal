@@ -8,7 +8,9 @@ const storageKeys = {
   legacyMigrated: "fx-edge-journal.legacy-migrated.v1",
   cloudClientId: "fx-edge-journal.cloud-client-id.v1",
   cloudSessionMode: "fx-edge-journal.cloud-session-mode.v1",
-  mt5DesktopProtocolInstalled: "fx-edge-journal.mt5-desktop-protocol-installed.v1"
+  mt5DesktopProtocolInstalled: "fx-edge-journal.mt5-desktop-protocol-installed.v1",
+  dailyReviewEvidence: "fx-edge-journal.daily-review-evidence.v1",
+  scrollPosition: "fx-edge-journal.scroll-position.v1"
 };
 
 const defaultPair = "XAU/USD";
@@ -799,6 +801,71 @@ function safeLocalRemove(key) {
   } catch (error) {
     // Ignore blocked localStorage.
   }
+}
+
+function appScrollSnapshot() {
+  return {
+    view: currentWorkspaceView(),
+    x: window.scrollX || 0,
+    y: window.scrollY || 0,
+    sidebarY: $(".sidebar-scroll-stack")?.scrollTop || 0,
+    historyY: $(".trade-history-scroll")?.scrollTop || 0,
+    savedAt: Date.now()
+  };
+}
+
+function saveAppScrollPosition() {
+  safeLocalSet(storageKeys.scrollPosition, JSON.stringify(appScrollSnapshot()));
+}
+
+function restoreAppScrollPosition() {
+  const raw = safeLocalGet(storageKeys.scrollPosition);
+  if (!raw) return;
+  try {
+    const snapshot = JSON.parse(raw);
+    if (!snapshot || Date.now() - toNumber(snapshot.savedAt, 0) > 86400000) return;
+    const restore = () => {
+      const view = String(snapshot.view || "");
+      const button = view && document.querySelector(`.nav-tab[data-view="${view}"]`);
+      if (button && activeAccount && !$("#loginView")?.classList.contains("active")) {
+        $$(".nav-tab").forEach((tab) => tab.classList.remove("active"));
+        button.classList.add("active");
+        $$(".view").forEach((item) => item.classList.remove("active"));
+        $(`#${view}View`)?.classList.add("active");
+        const title = $("#viewTitle");
+        if (title) title.textContent = button.textContent.trim();
+      }
+      window.scrollTo(toNumber(snapshot.x, 0), toNumber(snapshot.y, 0));
+      const sidebar = $(".sidebar-scroll-stack");
+      if (sidebar) sidebar.scrollTop = toNumber(snapshot.sidebarY, 0);
+      const history = $(".trade-history-scroll");
+      if (history) history.scrollTop = toNumber(snapshot.historyY, 0);
+    };
+    window.requestAnimationFrame(restore);
+    window.setTimeout(restore, 180);
+    window.setTimeout(restore, 520);
+  } catch (error) {
+    safeLocalRemove(storageKeys.scrollPosition);
+  }
+}
+
+function initAppScrollMemory() {
+  let scrollSaveTimer = 0;
+  const scheduleSave = () => {
+    window.clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = window.setTimeout(saveAppScrollPosition, 160);
+  };
+  window.addEventListener("scroll", scheduleSave, { passive: true });
+  $(".sidebar-scroll-stack")?.addEventListener("scroll", scheduleSave, { passive: true });
+  $(".trade-history-scroll")?.addEventListener("scroll", scheduleSave, { passive: true });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") saveAppScrollPosition();
+    if (document.visibilityState === "visible") window.setTimeout(restoreAppScrollPosition, 80);
+  });
+  window.addEventListener("pagehide", saveAppScrollPosition);
+  window.addEventListener("pageshow", () => window.setTimeout(restoreAppScrollPosition, 80));
+  window.addEventListener("focus", () => window.setTimeout(restoreAppScrollPosition, 80));
+  window.setTimeout(restoreAppScrollPosition, 120);
 }
 
 function cloudProjectRef() {
@@ -3855,6 +3922,192 @@ function normalizeDailyReviews(value) {
   return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
 
+function dailyEvidenceStore() {
+  const store = loadFromStorage(accountScopedKey(storageKeys.dailyReviewEvidence), {});
+  return store && typeof store === "object" && !Array.isArray(store) ? store : {};
+}
+
+function saveDailyEvidenceStore(store) {
+  try {
+    localStorage.setItem(accountScopedKey(storageKeys.dailyReviewEvidence), JSON.stringify(store));
+    return true;
+  } catch (error) {
+    showToast("Screenshot storage is full. Remove an old screenshot or use a smaller image.");
+    return false;
+  }
+}
+
+function normalizeDailyEvidenceItem(item = {}) {
+  return {
+    id: String(item.id || randomId("evidence")),
+    name: String(item.name || "Chart screenshot").slice(0, 120),
+    type: String(item.type || "image/webp"),
+    dataUrl: String(item.dataUrl || ""),
+    width: Math.max(toNumber(item.width, 0), 0),
+    height: Math.max(toNumber(item.height, 0), 0),
+    size: Math.max(toNumber(item.size, 0), 0),
+    originalSize: Math.max(toNumber(item.originalSize, 0), 0),
+    createdAt: item.createdAt || new Date().toISOString()
+  };
+}
+
+function dailyEvidenceForDate(date = localDateKey()) {
+  const key = String(date || "").slice(0, 10) || localDateKey();
+  const items = dailyEvidenceStore()[key];
+  return Array.isArray(items)
+    ? items.map(normalizeDailyEvidenceItem).filter((item) => item.dataUrl.startsWith("data:image/")).slice(0, 2)
+    : [];
+}
+
+function currentDailyReviewDate() {
+  return $("#dailyReviewDate")?.value || localDateKey();
+}
+
+function dataUrlByteSize(dataUrl = "") {
+  const encoded = String(dataUrl).split(",")[1] || "";
+  return Math.round((encoded.length * 3) / 4);
+}
+
+function compactBytes(value) {
+  const bytes = Math.max(toNumber(value, 0), 0);
+  if (bytes >= 1048576) return `${numberFormatter.format(bytes / 1048576)} MB`;
+  if (bytes >= 1024) return `${numberFormatter.format(bytes / 1024)} KB`;
+  return `${numberFormatter.format(bytes)} B`;
+}
+
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read image."));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("Could not load image."));
+      image.onload = () => resolve(image);
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function compressDailyEvidenceImage(file) {
+  const image = await readImageFile(file);
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+  const width = Math.max(Math.round((image.naturalWidth || image.width) * scale), 1);
+  const height = Math.max(Math.round((image.naturalHeight || image.height) * scale), 1);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0, width, height);
+  let dataUrl = canvas.toDataURL("image/webp", 0.78);
+  let type = "image/webp";
+  if (!dataUrl.startsWith("data:image/webp")) {
+    dataUrl = canvas.toDataURL("image/jpeg", 0.78);
+    type = "image/jpeg";
+  }
+  return normalizeDailyEvidenceItem({
+    id: randomId("evidence"),
+    name: file.name || "Chart screenshot",
+    type,
+    dataUrl,
+    width,
+    height,
+    size: dataUrlByteSize(dataUrl),
+    originalSize: file.size || 0,
+    createdAt: new Date().toISOString()
+  });
+}
+
+function renderDailyEvidencePreview(date = currentDailyReviewDate()) {
+  const container = $("#dailyEvidencePreview");
+  if (!container) return;
+  const items = dailyEvidenceForDate(date);
+  if (!items.length) {
+    container.innerHTML = '<div class="chart-evidence-empty">No screenshots uploaded yet.</div>';
+    return;
+  }
+  container.innerHTML = items
+    .map((item) => `
+      <article class="chart-evidence-card">
+        <button class="chart-evidence-open" type="button" data-evidence-action="open" data-id="${escapeHtml(item.id)}">
+          <img src="${escapeHtml(item.dataUrl)}" alt="${escapeHtml(item.name)}">
+        </button>
+        <div class="chart-evidence-meta">
+          <strong>${escapeHtml(item.name)}</strong>
+          <span>${escapeHtml(`${item.width}x${item.height} · ${compactBytes(item.size)}`)}</span>
+        </div>
+        <button class="mini-button text-mini danger" type="button" data-evidence-action="remove" data-id="${escapeHtml(item.id)}">Remove</button>
+      </article>
+    `)
+    .join("");
+}
+
+async function addDailyEvidenceFiles(fileList) {
+  const date = currentDailyReviewDate();
+  const files = Array.from(fileList || []).filter((file) => file.type.startsWith("image/"));
+  if (!files.length) {
+    showToast("Choose an image screenshot to upload.");
+    return;
+  }
+  const store = dailyEvidenceStore();
+  const existing = dailyEvidenceForDate(date);
+  const slots = Math.max(2 - existing.length, 0);
+  if (!slots) {
+    showToast("Daily Review supports 2 screenshots per day.");
+    return;
+  }
+  const selected = files.slice(0, slots);
+  try {
+    const compressed = [];
+    for (const file of selected) {
+      compressed.push(await compressDailyEvidenceImage(file));
+    }
+    store[date] = [...existing, ...compressed].slice(0, 2);
+    if (saveDailyEvidenceStore(store)) {
+      renderDailyEvidencePreview(date);
+      showToast(`Added ${compressed.length} screenshot${compressed.length === 1 ? "" : "s"}.`);
+    }
+  } catch (error) {
+    showToast("Could not process that screenshot.");
+  }
+}
+
+function removeDailyEvidence(id) {
+  const date = currentDailyReviewDate();
+  const store = dailyEvidenceStore();
+  const next = dailyEvidenceForDate(date).filter((item) => item.id !== id);
+  if (next.length) store[date] = next;
+  else delete store[date];
+  if (saveDailyEvidenceStore(store)) {
+    renderDailyEvidencePreview(date);
+    showToast("Screenshot removed.");
+  }
+}
+
+function openEvidencePreview(id) {
+  const item = dailyEvidenceForDate(currentDailyReviewDate()).find((evidence) => evidence.id === id);
+  if (!item) return;
+  const modal = $("#evidencePreviewModal");
+  const image = $("#evidencePreviewImage");
+  const meta = $("#evidencePreviewMeta");
+  if (!modal || !image) return;
+  image.src = item.dataUrl;
+  image.alt = item.name;
+  if (meta) meta.textContent = `${item.name} · ${item.width}x${item.height} · ${compactBytes(item.size)}`;
+  if (modal.parentElement !== document.body) document.body.appendChild(modal);
+  modal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+}
+
+function closeEvidencePreview() {
+  const modal = $("#evidencePreviewModal");
+  const image = $("#evidencePreviewImage");
+  if (image) image.removeAttribute("src");
+  modal?.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
 function inferScoreChecksFromTrade(trade = {}) {
   if (trade.scoreChecks && typeof trade.scoreChecks === "object") {
     return { ...defaultScoreChecks(), ...trade.scoreChecks };
@@ -4817,6 +5070,7 @@ function fillDailyReviewForm(date = localDateKey()) {
   Object.entries(review).forEach(([key, value]) => {
     if (form.elements[key]) form.elements[key].value = value;
   });
+  renderDailyEvidencePreview(review.date);
 }
 
 function fillDailyReviewFromJournal(date = localDateKey()) {
@@ -4826,6 +5080,7 @@ function fillDailyReviewFromJournal(date = localDateKey()) {
   Object.entries(review).forEach(([key, value]) => {
     if (form.elements[key]) form.elements[key].value = value;
   });
+  renderDailyEvidencePreview(review.date);
   renderChecklistDashboard();
 }
 
@@ -4863,16 +5118,19 @@ function renderDailyReviewHistory() {
     return;
   }
   container.innerHTML = reviews
-    .map((review) => `
+    .map((review) => {
+      const evidenceCount = dailyEvidenceForDate(review.date).length;
+      return `
       <article class="daily-review-item">
         <div>
           <strong>${escapeHtml(formatDate(review.date))}</strong>
           <p>${escapeHtml(review.tradesTaken || "0")} trades, ${escapeHtml(review.winLoss || "No W/L noted")}, ${escapeHtml(review.netPl || "$0.00")}</p>
-          <p>${escapeHtml(review.ruleForTomorrow || "No rule for tomorrow recorded.")}</p>
+          <p>${escapeHtml(review.ruleForTomorrow || "No rule for tomorrow recorded.")}${evidenceCount ? ` · ${escapeHtml(`${evidenceCount} screenshot${evidenceCount === 1 ? "" : "s"}`)}` : ""}</p>
         </div>
         <button class="mini-button text-mini" type="button" data-daily-review-date="${escapeHtml(review.date)}">Load</button>
       </article>
-    `)
+    `;
+    })
     .join("");
 }
 
@@ -4913,6 +5171,7 @@ function saveDailyReviewFromForm() {
   else settings.dailyReviews.push(review);
   settings.dailyReviews = normalizeDailyReviews(settings.dailyReviews);
   saveSettings();
+  renderDailyEvidencePreview(review.date);
   renderDailyReviewHistory();
   renderChecklistDashboard();
   showToast("Daily review saved.");
@@ -4932,6 +5191,7 @@ function exportDailyReviewsCsv() {
     "winLoss",
     "netPl",
     "screenshots",
+    "chartEvidenceCount",
     "followedPlan",
     "reversedEmotionally",
     "closedEarly",
@@ -4945,7 +5205,10 @@ function exportDailyReviewsCsv() {
     "updatedAt"
   ];
   const rows = reviews.map((review) =>
-    headers.map((header) => `"${String(review[header] ?? "").replace(/"/g, '""')}"`).join(",")
+    headers.map((header) => {
+      const value = header === "chartEvidenceCount" ? dailyEvidenceForDate(review.date).length : review[header];
+      return `"${String(value ?? "").replace(/"/g, '""')}"`;
+    }).join(",")
   );
   downloadFile("fx-daily-reviews.csv", [headers.join(","), ...rows].join("\n"), "text/csv");
 }
@@ -7669,6 +7932,7 @@ function bindEvents() {
       render();
       if (button.dataset.view === "analytics") rerenderAnalyticsSoon(60);
       scrollMobileNavigationTarget(button.dataset.view);
+      window.setTimeout(saveAppScrollPosition, 120);
     });
   });
 
@@ -8086,6 +8350,31 @@ function bindEvents() {
     exportDailyReviewsButton.addEventListener("click", exportDailyReviewsCsv);
   }
 
+  const addDailyEvidenceButton = $("#addDailyEvidenceBtn");
+  const dailyEvidenceInput = $("#dailyEvidenceInput");
+  if (addDailyEvidenceButton && dailyEvidenceInput) {
+    addDailyEvidenceButton.addEventListener("click", () => dailyEvidenceInput.click());
+    dailyEvidenceInput.addEventListener("change", (event) => {
+      addDailyEvidenceFiles(event.target.files);
+      event.target.value = "";
+    });
+  }
+
+  const dailyEvidencePreview = $("#dailyEvidencePreview");
+  if (dailyEvidencePreview) {
+    dailyEvidencePreview.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-evidence-action]");
+      if (!button) return;
+      if (button.dataset.evidenceAction === "remove") removeDailyEvidence(button.dataset.id);
+      if (button.dataset.evidenceAction === "open") openEvidencePreview(button.dataset.id);
+    });
+  }
+
+  $("#closeEvidencePreviewBtn")?.addEventListener("click", closeEvidencePreview);
+  $("#evidencePreviewModal")?.addEventListener("click", (event) => {
+    if (event.target.id === "evidencePreviewModal") closeEvidencePreview();
+  });
+
   const dailyReviewHistory = $("#dailyReviewHistory");
   if (dailyReviewHistory) {
     dailyReviewHistory.addEventListener("click", (event) => {
@@ -8134,6 +8423,7 @@ function bootstrap() {
   syncAccountUi();
   renderDstWidget();
   setInterval(renderDstWidget, 60000);
+  initAppScrollMemory();
   if (!activeAccount) {
     showAuthOverlay("cloud", true);
   }

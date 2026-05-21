@@ -2901,7 +2901,7 @@ td {
   min-height: 612px;
 }
 
-.daily-template-panel,
+.checklist-grid > .daily-template-panel,
 .checklist-grid > .rule-panel:last-child {
   grid-column: 1 / -1;
   min-height: auto;
@@ -3052,13 +3052,184 @@ td {
 
 .daily-template-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(280px, 0.38fr) minmax(0, 1fr);
+  gap: 14px;
   margin-top: 14px;
+  align-items: start;
+  width: 100%;
+  overflow: visible;
 }
 
-.daily-template-grid .wide-field {
-  grid-column: span 2;
+.daily-review-section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-strong) 90%, transparent);
+}
+
+.daily-review-section label {
+  min-width: 0;
+}
+
+.daily-review-section input,
+.daily-review-section select,
+.daily-review-section textarea {
+  width: 100%;
+}
+
+.daily-review-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  grid-column: 1;
+}
+
+.daily-note-field {
+  grid-column: 1 / -1;
+}
+
+.daily-behavior-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.daily-reflection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.daily-reflection-grid textarea {
+  min-height: 106px;
+}
+
+.chart-evidence-field {
+  grid-column: 2;
+  grid-row: span 2;
+  display: grid;
+  gap: 12px;
+  background: color-mix(in srgb, var(--surface-strong) 88%, var(--teal) 4%);
+  min-width: 0;
+}
+
+.chart-evidence-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chart-evidence-header span {
+  display: block;
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.chart-evidence-header small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.chart-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.chart-evidence-empty {
+  grid-column: 1 / -1;
+  min-height: clamp(420px, 48vh, 720px);
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: var(--surface);
+  font-weight: 700;
+  text-align: center;
+}
+
+.chart-evidence-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.chart-evidence-open {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: clamp(420px, 48vh, 720px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #050908;
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.chart-evidence-open img {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  display: block;
+  object-fit: contain;
+  background: #050908;
+}
+
+.chart-evidence-meta {
+  min-width: 0;
+}
+
+.chart-evidence-meta strong,
+.chart-evidence-meta span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-evidence-meta strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.chart-evidence-meta span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.evidence-preview-card {
+  width: min(1180px, calc(100vw - 28px));
+}
+
+.evidence-preview-shell {
+  max-height: min(74vh, 820px);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: #050908;
+  overflow: hidden;
+}
+
+.evidence-preview-shell img {
+  max-width: 100%;
+  max-height: min(74vh, 820px);
+  display: block;
+  object-fit: contain;
 }
 
 .daily-review-actions {
@@ -3134,17 +3305,27 @@ td {
 
   .setup-profile-panel,
   .checklist-hero-panel,
-  .daily-template-panel,
+  .checklist-grid > .daily-template-panel,
   .checklist-grid > .rule-panel:last-child {
     grid-column: 1 / -1;
   }
 
   .daily-template-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(280px, 0.36fr) minmax(0, 1fr);
   }
 
-  .daily-template-grid .wide-field {
-    grid-column: span 3;
+  .daily-review-summary {
+    grid-column: 1;
+  }
+
+  .chart-evidence-field {
+    grid-column: 2;
+    grid-row: span 2;
+  }
+
+  .daily-behavior-grid,
+  .daily-reflection-grid {
+    grid-column: 1 / -1;
   }
 
   .strategy-filter-bar,
@@ -3154,6 +3335,17 @@ td {
 
   .checklist-grid > .rule-panel:nth-of-type(4) {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1320px) {
+  .daily-template-grid {
+    grid-template-columns: minmax(260px, 0.4fr) minmax(0, 1fr);
+  }
+
+  .chart-evidence-empty,
+  .chart-evidence-open {
+    min-height: clamp(360px, 46vh, 620px);
   }
 }
 
@@ -3645,8 +3837,15 @@ td {
     grid-template-columns: 1fr;
   }
 
-  .daily-template-grid .wide-field {
-    grid-column: auto;
+  .daily-review-summary,
+  .chart-evidence-field,
+  .daily-behavior-grid,
+  .daily-reflection-grid {
+    grid-column: 1 / -1;
+  }
+
+  .chart-evidence-field {
+    grid-row: auto;
   }
 }
 
@@ -3847,8 +4046,44 @@ td {
     grid-template-columns: 1fr;
   }
 
-  .daily-template-grid .wide-field {
+  .daily-review-summary,
+  .daily-behavior-grid,
+  .daily-reflection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-note-field {
     grid-column: auto;
+  }
+
+  .daily-review-section {
+    padding: 12px;
+  }
+
+  .chart-evidence-header {
+    flex-direction: column;
+  }
+
+  .chart-evidence-header .tool-button {
+    width: 100%;
+  }
+
+  .chart-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-evidence-open {
+    min-height: clamp(220px, 62vw, 340px);
+  }
+
+  .evidence-preview-card {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .evidence-preview-shell,
+  .evidence-preview-shell img {
+    max-height: 70vh;
   }
 
   .kpi-card strong {

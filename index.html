@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=103">
+  <link rel="stylesheet" href="styles.css?v=109">
 </head>
 <body>
   <div class="app-shell">
@@ -1333,23 +1333,40 @@
               <span class="status-pill">Daily sheet</span>
             </div>
             <form id="dailyReviewForm" class="daily-template-grid">
-              <label><span>Date</span><input type="date" name="date" id="dailyReviewDate"></label>
-              <label><span>Starting balance</span><input type="number" name="startingBalance" min="0" step="1" placeholder="1000"></label>
-              <label><span>Ending balance</span><input type="number" name="endingBalance" min="0" step="1" placeholder="1040"></label>
-              <label><span>Trades taken</span><input type="number" name="tradesTaken" min="0" step="1" placeholder="2"></label>
-              <label><span>Win / Loss</span><input name="winLoss" placeholder="1W / 1L"></label>
-              <label><span>Net P/L</span><input name="netPl" placeholder="$0.00"></label>
-              <label><span>Screenshots</span><input name="screenshots" placeholder="Chart link or note"></label>
-              <label><span>Followed plan?</span><select name="followedPlan"><option>Yes</option><option>No</option><option>Partially</option></select></label>
-              <label><span>Reversed emotionally?</span><select name="reversedEmotionally"><option>No</option><option>Yes</option></select></label>
-              <label><span>Closed too early?</span><select name="closedEarly"><option>No</option><option>Yes</option></select></label>
-              <label><span>Moved SL emotionally?</span><select name="movedSl"><option>No</option><option>Yes</option></select></label>
-              <label><span>Overtraded?</span><select name="overtraded"><option>No</option><option>Yes</option></select></label>
-              <label><span>Biggest emotion today</span><input name="biggestEmotion" placeholder="Calm, FOMO, frustration"></label>
-              <label class="wide-field"><span>Best behavior today</span><textarea name="bestBehavior" rows="2" placeholder="What did I do well?"></textarea></label>
-              <label class="wide-field"><span>Worst behavior today</span><textarea name="worstBehavior" rows="2" placeholder="What rule needs attention?"></textarea></label>
-              <label class="wide-field"><span>Main lesson</span><textarea name="mainLesson" rows="2" placeholder="What should I remember?"></textarea></label>
-              <label class="wide-field"><span>Rule for tomorrow</span><textarea name="ruleForTomorrow" rows="2" placeholder="One specific rule for the next day."></textarea></label>
+              <div class="daily-review-section daily-review-summary">
+                <label><span>Date</span><input type="date" name="date" id="dailyReviewDate"></label>
+                <label><span>Starting balance</span><input type="number" name="startingBalance" min="0" step="0.01" placeholder="1000.00"></label>
+                <label><span>Ending balance</span><input type="number" name="endingBalance" min="0" step="0.01" placeholder="1040.00"></label>
+                <label><span>Trades taken</span><input type="number" name="tradesTaken" min="0" step="1" placeholder="2"></label>
+                <label><span>Win / Loss</span><input name="winLoss" placeholder="1W / 1L"></label>
+                <label><span>Net P/L</span><input name="netPl" placeholder="$0.00"></label>
+                <label class="daily-note-field"><span>Chart link / note</span><input name="screenshots" placeholder="TradingView link or chart note"></label>
+              </div>
+              <div class="daily-review-section chart-evidence-field">
+                <div class="chart-evidence-header">
+                  <div>
+                    <span>Chart Evidence</span>
+                    <small>Upload up to 2 screenshots. Images are resized before saving.</small>
+                  </div>
+                  <button class="tool-button compact" type="button" id="addDailyEvidenceBtn">Upload</button>
+                </div>
+                <input type="file" id="dailyEvidenceInput" accept="image/*" multiple hidden>
+                <div class="chart-evidence-grid" id="dailyEvidencePreview" aria-live="polite"></div>
+              </div>
+              <div class="daily-review-section daily-behavior-grid">
+                <label><span>Followed plan?</span><select name="followedPlan"><option>Yes</option><option>No</option><option>Partially</option></select></label>
+                <label><span>Reversed emotionally?</span><select name="reversedEmotionally"><option>No</option><option>Yes</option></select></label>
+                <label><span>Closed too early?</span><select name="closedEarly"><option>No</option><option>Yes</option></select></label>
+                <label><span>Moved SL emotionally?</span><select name="movedSl"><option>No</option><option>Yes</option></select></label>
+                <label><span>Overtraded?</span><select name="overtraded"><option>No</option><option>Yes</option></select></label>
+                <label><span>Biggest emotion today</span><input name="biggestEmotion" placeholder="Calm, FOMO, frustration"></label>
+              </div>
+              <div class="daily-review-section daily-reflection-grid">
+                <label><span>Best behavior today</span><textarea name="bestBehavior" rows="3" placeholder="What did I do well?"></textarea></label>
+                <label><span>Worst behavior today</span><textarea name="worstBehavior" rows="3" placeholder="What rule needs attention?"></textarea></label>
+                <label><span>Main lesson</span><textarea name="mainLesson" rows="3" placeholder="What should I remember?"></textarea></label>
+                <label><span>Rule for tomorrow</span><textarea name="ruleForTomorrow" rows="3" placeholder="One specific rule for the next day."></textarea></label>
+              </div>
               <div class="daily-review-actions">
                 <button class="tool-button" type="submit">Save Review</button>
                 <button class="tool-button" type="button" id="refreshDailyReviewBtn">Refresh from Journal</button>
@@ -1518,6 +1535,24 @@
     </section>
   </div>
 
+  <div class="profile-modal hidden" id="evidencePreviewModal" role="dialog" aria-modal="true" aria-labelledby="evidencePreviewTitle">
+    <section class="profile-card evidence-preview-card panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Chart Evidence</p>
+          <h2 id="evidencePreviewTitle">Screenshot Review</h2>
+        </div>
+        <button class="icon-button" type="button" id="closeEvidencePreviewBtn" title="Close screenshot preview" aria-label="Close screenshot preview">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="evidence-preview-shell">
+        <img id="evidencePreviewImage" alt="Trading screenshot preview">
+      </div>
+      <p class="rule-copy" id="evidencePreviewMeta"></p>
+    </section>
+  </div>
+
   <div class="profile-modal hidden" id="mt5DesktopSetupModal" role="dialog" aria-modal="true" aria-labelledby="mt5DesktopSetupTitle">
     <section class="profile-card panel mt5-setup-card">
       <div class="panel-header">
@@ -1660,6 +1695,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=103"></script>
+  <script src="app.js?v=109"></script>
 </body>
 </html>
