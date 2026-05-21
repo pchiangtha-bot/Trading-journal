@@ -3245,11 +3245,40 @@ td {
 
 .daily-review-actions {
   grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  align-items: end;
+  padding-top: 2px;
+}
+
+.daily-review-export-controls,
+.daily-review-action-buttons {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: flex-end;
+}
+
+.daily-review-action-buttons {
   justify-content: flex-end;
-  padding-top: 2px;
+}
+
+.daily-review-export-control {
+  display: grid;
+  gap: 5px;
+  min-width: 150px;
+}
+
+.daily-review-export-control span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.daily-review-export-control select,
+.daily-review-export-control input {
+  min-height: 44px;
 }
 
 .daily-review-history {
@@ -4142,6 +4171,19 @@ td {
 
   .daily-review-item-actions .mini-button {
     flex: 1 1 120px;
+  }
+
+  .daily-review-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-review-export-control,
+  .daily-review-action-buttons .tool-button {
+    flex: 1 1 150px;
+  }
+
+  .daily-review-action-buttons {
+    justify-content: stretch;
   }
 
   .chart-evidence-header {

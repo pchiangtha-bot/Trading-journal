@@ -5248,6 +5248,12 @@ function exportDailyReviewsCsv() {
     showToast("Save a daily review before exporting.");
     return;
   }
+  const range = dailyReviewExportRange();
+  const visibleReviews = filterDailyReviewsForExport(reviews, range);
+  if (!visibleReviews.length) {
+    showToast("No daily reviews match that CSV period.");
+    return;
+  }
   const headers = [
     "date",
     "startingBalance",
@@ -5269,13 +5275,60 @@ function exportDailyReviewsCsv() {
     "ruleForTomorrow",
     "updatedAt"
   ];
-  const rows = reviews.map((review) =>
+  const rows = visibleReviews.map((review) =>
     headers.map((header) => {
       const value = header === "chartEvidenceCount" ? dailyEvidenceForDate(review.date).length : review[header];
       return `"${String(value ?? "").replace(/"/g, '""')}"`;
     }).join(",")
   );
-  downloadFile("fx-daily-reviews.csv", [headers.join(","), ...rows].join("\n"), "text/csv");
+  downloadFile(dailyReviewExportFilename(range), [headers.join(","), ...rows].join("\n"), "text/csv");
+  showToast(`Exported ${visibleReviews.length} daily ${visibleReviews.length === 1 ? "review" : "reviews"}.`);
+}
+
+function dailyReviewExportRange() {
+  const period = $("#dailyReviewExportPeriod")?.value || "all";
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  if (period === "today") return { period, start: todayKey, end: todayKey };
+  if (period === "thisWeek") return { period, start: localDateKey(startOfWeek(today)), end: todayKey };
+  if (period === "thisMonth") return { period, start: `${todayKey.slice(0, 7)}-01`, end: todayKey };
+  if (period === "thisYear") return { period, start: `${today.getFullYear()}-01-01`, end: todayKey };
+  if (period === "last30") return { period, start: localDateKey(addDays(today, -29)), end: todayKey };
+  if (period === "custom") {
+    return {
+      period,
+      start: $("#dailyReviewExportStart")?.value || "",
+      end: $("#dailyReviewExportEnd")?.value || ""
+    };
+  }
+  return { period: "all", start: "", end: "" };
+}
+
+function filterDailyReviewsForExport(reviews, range) {
+  return reviews.filter((review) => {
+    const date = String(review.date || "").slice(0, 10);
+    if (!date) return false;
+    if (range.start && date < range.start) return false;
+    if (range.end && date > range.end) return false;
+    return true;
+  });
+}
+
+function dailyReviewExportFilename(range) {
+  const label = range.start || range.end ? `${range.start || "start"}-to-${range.end || "latest"}` : "all";
+  return `fx-daily-reviews-${label}.csv`.replace(/[^a-z0-9._-]+/gi, "-");
+}
+
+function updateDailyReviewExportControls() {
+  const range = dailyReviewExportRange();
+  const isCustom = range.period === "custom";
+  $$(".daily-review-export-custom").forEach((control) => control.classList.toggle("hidden", !isCustom));
+  if (!isCustom) {
+    const startInput = $("#dailyReviewExportStart");
+    const endInput = $("#dailyReviewExportEnd");
+    if (startInput) startInput.value = range.start || "";
+    if (endInput) endInput.value = range.end || "";
+  }
 }
 
 function normalizeTimeValue(value) {
@@ -8421,6 +8474,20 @@ function bindEvents() {
   if (exportDailyReviewsButton) {
     exportDailyReviewsButton.addEventListener("click", exportDailyReviewsCsv);
   }
+  const dailyReviewExportPeriod = $("#dailyReviewExportPeriod");
+  if (dailyReviewExportPeriod) {
+    dailyReviewExportPeriod.addEventListener("change", updateDailyReviewExportControls);
+    updateDailyReviewExportControls();
+  }
+  ["dailyReviewExportStart", "dailyReviewExportEnd"].forEach((id) => {
+    const input = $(`#${id}`);
+    if (!input) return;
+    input.addEventListener("input", () => {
+      const period = $("#dailyReviewExportPeriod");
+      if (period) period.value = "custom";
+      updateDailyReviewExportControls();
+    });
+  });
 
   const addDailyEvidenceButton = $("#addDailyEvidenceBtn");
   const dailyEvidenceInput = $("#dailyEvidenceInput");
