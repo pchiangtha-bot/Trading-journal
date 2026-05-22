@@ -45,6 +45,7 @@ let strategySetupType = "all";
 let loginReturnView = "journal";
 let marketChartPair = defaultPair;
 let marketChartInterval = "1D";
+let marketChartRenderKey = "";
 const marketChartRanges = ["1D", "5D", "1M", "3M", "12M"];
 
 const contractSizeBySymbol = {
@@ -3673,12 +3674,27 @@ function saveMarketChartSettings() {
   saveSettings();
 }
 
-function renderTradingViewWidget() {
+function renderTradingViewWidget(force = false) {
   const shell = $("#tradingViewWidgetShell");
   if (!shell) return;
   const symbol = tradingViewSymbolFromPair(marketChartPair);
+  const renderKey = `${symbol}|${marketChartInterval}|light`;
+  if (!force && marketChartRenderKey === renderKey && shell.querySelector("iframe, script")) {
+    syncMarketChartOverlay(symbol);
+    return;
+  }
+  marketChartRenderKey = renderKey;
+  shell.classList.add("is-loading");
   shell.innerHTML = '<div class="tradingview-widget-container__widget" id="tradingViewWidget"></div><a class="market-chart-overlay" id="marketChartOverlay" target="_blank" rel="noopener noreferrer"></a>';
   syncMarketChartOverlay(symbol);
+  const loadingObserver = new MutationObserver(() => {
+    const iframe = shell.querySelector("iframe");
+    if (!iframe) return;
+    iframe.addEventListener("load", () => shell.classList.remove("is-loading"), { once: true });
+    window.setTimeout(() => shell.classList.remove("is-loading"), 2800);
+    loadingObserver.disconnect();
+  });
+  loadingObserver.observe(shell, { childList: true, subtree: true });
   const script = document.createElement("script");
   script.type = "text/javascript";
   script.src = "https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js";
@@ -3700,6 +3716,7 @@ function renderTradingViewWidget() {
     noTimeScale: false
   });
   shell.appendChild(script);
+  window.setTimeout(() => shell.classList.remove("is-loading"), 5200);
 }
 
 function syncMarketChartControls() {
@@ -8340,16 +8357,16 @@ function bindEvents() {
   $("#marketChartPairSelect").addEventListener("change", (event) => {
     marketChartPair = normalizePair(event.target.value || defaultPair);
     saveMarketChartSettings();
-    renderTradingViewWidget();
+    renderTradingViewWidget(true);
   });
   $("#marketChartInterval").addEventListener("change", (event) => {
     marketChartInterval = event.target.value || "1D";
     if (!marketChartRanges.includes(marketChartInterval)) marketChartInterval = "1D";
     saveMarketChartSettings();
-    renderTradingViewWidget();
+    renderTradingViewWidget(true);
   });
   const reloadButton = $("#reloadMarketChartBtn");
-  if (reloadButton) reloadButton.addEventListener("click", renderTradingViewWidget);
+  if (reloadButton) reloadButton.addEventListener("click", () => renderTradingViewWidget(true));
 
   $("#tradeForm").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -8794,12 +8811,6 @@ bootstrap();
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
   navigator.serviceWorker.register("./sw.js").then((registration) => {
     registration.update();
   }).catch(() => {

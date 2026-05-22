@@ -1125,16 +1125,16 @@ body[data-auth-page="true"] #loginView.active {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: rgba(5, 8, 8, 0.58);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: rgba(5, 8, 8, 0.62);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   transition: background 140ms ease, backdrop-filter 140ms ease;
 }
 
 .trade-ticket-overlay.is-scrolling::before {
-  background: rgba(5, 8, 8, 0.64);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  background: rgba(5, 8, 8, 0.62);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .trade-ticket-overlay.hidden {
@@ -1961,6 +1961,23 @@ input[type="range"] {
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--surface-strong);
+}
+
+.market-chart-shell.is-loading::before {
+  content: "Loading live symbol";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: var(--muted);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--teal) 12%, transparent), transparent 46%),
+    var(--surface-strong);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
 }
 
 .sidebar-market-panel .market-chart-shell {
@@ -2810,7 +2827,7 @@ td {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
   width: 100%;
   grid-auto-flow: row dense;
 }
@@ -2827,7 +2844,7 @@ td {
 .strategy-profile-panel,
 .setup-profile-panel {
   grid-column: span 4;
-  min-height: 0;
+  min-height: clamp(300px, 32vh, 420px);
 }
 
 .setup-profile-panel {
@@ -2856,8 +2873,8 @@ td {
 }
 
 .strategy-profile-panel {
-  align-self: start;
-  height: auto;
+  align-self: stretch;
+  height: 100%;
 }
 
 .strategy-profile-panel .panel-header {
@@ -3117,7 +3134,7 @@ td {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
   width: 100%;
   grid-auto-flow: row dense;
 }
@@ -3129,7 +3146,7 @@ td {
 
 .checklist-grid > .rule-panel {
   grid-column: span 4;
-  min-height: clamp(420px, 44vh, 560px);
+  min-height: clamp(560px, 58vh, 760px);
 }
 
 .checklist-grid > .daily-template-panel,
@@ -3210,9 +3227,9 @@ td {
   flex: 1 1 auto;
   align-content: start;
   min-height: 0;
-  max-height: clamp(300px, 34vh, 440px);
-  overflow: auto;
-  padding-right: 4px;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .rule-panel .check-card {
@@ -4201,9 +4218,6 @@ td {
   .checklist-grid > .rule-panel .rule-checklist,
   .checklist-grid > .rule-panel:nth-of-type(4) .rule-checklist.two-column {
     grid-template-columns: 1fr;
-    max-height: none;
-    overflow: visible;
-    padding-right: 0;
   }
 }
 
