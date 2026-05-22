@@ -478,6 +478,8 @@ let mt5RealtimeHiddenKeys = new Set();
 let pendingMt5OrderId = "";
 let latestMt5BridgeSetup = "";
 let mt5HistoryReviewRange = { active: false, start: "", end: "" };
+let mt5LastFetchAt = "";
+let mt5LastOrderAt = "";
 let cloudSyncState = {
   label: "Local",
   detail: "Use email/password to sync this journal between iPhone and PC.",
@@ -1302,10 +1304,25 @@ function hideAuthOverlay() {
   }
 }
 
+function bindTradeTicketScrollPerformance(modal) {
+  const form = modal?.querySelector("#tradeForm");
+  if (!modal || !form || form.dataset.scrollPerformanceBound === "true") return;
+  let scrollEndTimer = 0;
+  form.addEventListener("scroll", () => {
+    modal.classList.add("is-scrolling");
+    window.clearTimeout(scrollEndTimer);
+    scrollEndTimer = window.setTimeout(() => {
+      modal.classList.remove("is-scrolling");
+    }, 180);
+  }, { passive: true });
+  form.dataset.scrollPerformanceBound = "true";
+}
+
 function openTradeTicketModal() {
   const modal = $("#tradeTicketModal");
   if (!modal) return;
   if (modal.parentElement !== document.body) document.body.appendChild(modal);
+  bindTradeTicketScrollPerformance(modal);
   modal.classList.remove("hidden");
   document.body.classList.add("modal-open");
   setTimeout(() => {
@@ -1317,6 +1334,7 @@ function openTradeTicketModal() {
 function closeTradeTicketModal() {
   const modal = $("#tradeTicketModal");
   if (!modal) return;
+  modal.classList.remove("is-scrolling");
   modal.classList.add("hidden");
   document.body.classList.remove("modal-open");
 }
@@ -1542,7 +1560,9 @@ function mt5BridgeSetupText(token, source = "desktop") {
   return [
     `WebhookUrl=${mt5WebhookUrl()}`,
     `BridgeToken=${token}`,
-    "MT5 Allow URL=https://lzaetartgfejsnwpiezc.supabase.co"
+    "MT5 Allow URL=https://lzaetartgfejsnwpiezc.supabase.co",
+    "Use this token on one MT5 desktop/VPS bridge only.",
+    "If another user signs in, they must generate their own bridge token."
   ].join("\n");
 }
 
@@ -1557,10 +1577,108 @@ function withCloudTimeout(task, message = "Cloud request timed out. Check Supaba
 function setMt5InboxState(kind = "idle", message = "", extra = {}) {
   mt5InboxState = { kind, message, ...extra };
   renderMt5Inbox();
+  renderMt5BridgeStatus();
 }
 
 function formatNullableDateTime(value) {
   return value ? formatDateTime(value) : "Never";
+}
+
+function activeMt5BridgeTokens() {
+  return mt5BridgeTokens.filter((token) => !token.revoked_at);
+}
+
+function latestMt5TokenUse() {
+  return activeMt5BridgeTokens()
+    .map((token) => token.last_used_at)
+    .filter(Boolean)
+    .sort()
+    .pop() || "";
+}
+
+function mt5BridgeHealth() {
+  if (!cloudUser) return { label: "Sign in", tone: "warning" };
+  if (!supabaseClient) return { label: "Supabase off", tone: "error" };
+  if (mt5InboxState.kind === "error") return { label: "Needs check", tone: "error" };
+  const activeCount = activeMt5BridgeTokens().length;
+  if (!activeCount) return { label: "Token needed", tone: "warning" };
+  const lastUsed = latestMt5TokenUse();
+  if (!lastUsed) return { label: "Waiting EA", tone: "warning" };
+  const ageMinutes = (Date.now() - new Date(lastUsed).getTime()) / 60000;
+  if (Number.isFinite(ageMinutes) && ageMinutes <= 15) return { label: "Live", tone: "ready" };
+  return { label: "Standby", tone: "warning" };
+}
+
+function mt5InboxReviewMode() {
+  return mt5InboxState.mode === "history" || mt5HistoryReviewRange.active;
+}
+
+function mt5HistoryRangeLabel() {
+  return mt5HistoryReviewRange.start || mt5HistoryReviewRange.end
+    ? `${mt5HistoryReviewRange.start || "Start"} to ${mt5HistoryReviewRange.end || "Latest"}`
+    : "selected period";
+}
+
+function mt5InboxModeStatus() {
+  if (!cloudUser) return { label: "Signed out", tone: "muted", detail: "Cloud sign in is required for MT5 automation." };
+  if (mt5InboxState.kind === "error") return { label: "Needs check", tone: "error", detail: mt5InboxState.message || "MT5 refresh failed." };
+  if (mt5InboxState.kind === "loading") {
+    return mt5InboxReviewMode()
+      ? { label: "Loading history", tone: "loading", detail: `Checking MT5 history for ${mt5HistoryRangeLabel()}.` }
+      : { label: "Checking live", tone: "loading", detail: "Checking new closed positions from Supabase." };
+  }
+  return mt5InboxReviewMode()
+    ? { label: "History review", tone: "history", detail: `Showing all MT5 orders found for ${mt5HistoryRangeLabel()}, including recorded, ignored, and deleted-from-journal orders.` }
+    : { label: "Live scan", tone: "live", detail: "Showing only new closed positions. Recorded and ignored orders stay hidden until Display History is used." };
+}
+
+function renderMt5InboxModeBadge() {
+  const badge = $("#mt5InboxModeBadge");
+  if (!badge) return;
+  const mode = mt5InboxModeStatus();
+  badge.textContent = mode.label;
+  badge.title = mode.detail;
+  badge.className = `mt5-inbox-mode-badge ${mode.tone}`;
+}
+
+function renderMt5RefreshButton() {
+  const button = $("#refreshMt5OrdersBtn");
+  if (!button) return;
+  const historyMode = mt5InboxReviewMode();
+  button.innerHTML = `${iconMarkup("refresh")} ${historyMode ? "Back to live" : "Refresh"}`;
+  button.title = historyMode
+    ? "Return to live scan and hide recorded or ignored MT5 orders."
+    : "Refresh new MT5 closed positions from Supabase.";
+}
+
+function renderMt5BridgeStatus() {
+  const container = $("#mt5BridgeStatus");
+  if (!container) return;
+  const activeCount = activeMt5BridgeTokens().length;
+  const health = mt5BridgeHealth();
+  const mode = mt5InboxModeStatus();
+  container.innerHTML = [
+    { label: "Bridge", value: health.label, className: `health-${health.tone}` },
+    { label: "Inbox", value: mode.label, className: `mode-${mode.tone}` },
+    { label: "Active tokens", value: `${activeCount} active`, className: "" },
+    { label: "Web refresh", value: formatNullableDateTime(mt5LastFetchAt), className: "" },
+    { label: "EA heartbeat", value: formatNullableDateTime(latestMt5TokenUse()), className: "" },
+    { label: "Last closed", value: formatNullableDateTime(mt5LastOrderAt), className: "" }
+  ].map((item) => `
+    <div class="mt5-bridge-status-item ${escapeHtml(item.className)}">
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(item.value)}</strong>
+    </div>
+  `).join("");
+}
+
+function bridgeTokenActivity(token) {
+  if (token?.revoked_at) return { label: "Revoked", className: "revoked" };
+  if (!token?.last_used_at) return { label: "Waiting EA", className: "waiting" };
+  const ageMinutes = (Date.now() - new Date(token.last_used_at).getTime()) / 60000;
+  if (Number.isFinite(ageMinutes) && ageMinutes <= 15) return { label: "Live", className: "live" };
+  if (Number.isFinite(ageMinutes) && ageMinutes <= 360) return { label: "Standby", className: "standby" };
+  return { label: "Idle", className: "idle" };
 }
 
 function renderBridgeTokenManager() {
@@ -1569,11 +1687,13 @@ function renderBridgeTokenManager() {
   if (!cloudUser) {
     mt5BridgeTokens = [];
     list.innerHTML = '<p class="profile-helper-text">Sign in to cloud to manage MT5 bridge tokens.</p>';
+    renderMt5BridgeStatus();
     return;
   }
 
   if (!mt5BridgeTokens.length) {
-    list.innerHTML = '<p class="profile-helper-text">No bridge tokens yet. Generate a PC or Mobile token from the MT5 Bridge panel.</p>';
+    list.innerHTML = '<p class="profile-helper-text">No bridge tokens yet. Generate one token for each PC, phone, VPS, or relay that should send MT5 orders for this signed-in account.</p>';
+    renderMt5BridgeStatus();
     return;
   }
 
@@ -1583,18 +1703,21 @@ function renderBridgeTokenManager() {
       const label = token.label || "MT5 bridge token";
       const created = formatNullableDateTime(token.created_at);
       const lastUsed = formatNullableDateTime(token.last_used_at);
+      const activity = bridgeTokenActivity(token);
       return `
         <article class="bridge-token-card ${revoked ? "revoked" : ""}">
           <div>
             <strong>${escapeHtml(label)}</strong>
             <span>Created ${escapeHtml(created)} · Last used ${escapeHtml(lastUsed)}</span>
-            <span class="bridge-token-status ${revoked ? "revoked" : ""}">${revoked ? "Revoked" : "Active"}</span>
+            <span class="bridge-token-status ${escapeHtml(activity.className)}">${escapeHtml(activity.label)}</span>
+            <small class="bridge-token-help">Private to this cloud account. Revoke it if this device should stop sending orders.</small>
           </div>
           <button class="mini-button text-mini danger" type="button" data-token-action="revoke" data-id="${escapeHtml(token.id)}" ${revoked ? "disabled" : ""}>Revoke</button>
         </article>
       `;
     })
     .join("");
+  renderMt5BridgeStatus();
 }
 
 async function fetchMt5BridgeTokens(options = {}) {
@@ -1704,6 +1827,7 @@ function syncCloudUi() {
   const output = $("#mt5BridgeOutput");
   if (output && latestMt5BridgeSetup) output.value = latestMt5BridgeSetup;
 
+  renderMt5BridgeStatus();
   renderMt5Inbox();
   syncProfileManagementUi();
 }
@@ -2050,7 +2174,7 @@ async function generateMt5BridgeToken(source = "desktop") {
   const isMobile = source === "mobile";
   const token = randomToken(isMobile ? "fxej_mt5_mobile" : "fxej_mt5");
   const tokenHash = await sha256Hex(token);
-  const label = `${isMobile ? "MT5 mobile relay" : "MT5 desktop"} ${new Date().toLocaleDateString()}`;
+  const label = `${isMobile ? "MT5 mobile relay" : "MT5 desktop"} · ${new Date().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
   const { error } = await supabaseClient.from(mt5TokenTable).insert({
     user_id: cloudUser.id,
     token_hash: tokenHash,
@@ -2106,11 +2230,20 @@ function subscribeMt5Orders() {
     .subscribe(() => {});
 }
 
+function updateMt5LastOrderFromFetched(orders) {
+  const latest = (orders || [])
+    .map((order) => mt5OrderCorrectedDate(order, "closed") || new Date(order.closed_at || order.updated_at || order.created_at || ""))
+    .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  if (latest) mt5LastOrderAt = latest.toISOString();
+}
+
 async function fetchMt5DetectedOrders(options = {}) {
   const { silent = false, historyReview = false, forceRealtime = false } = options;
   if (!supabaseClient || !cloudUser) {
     mt5DetectedOrders = [];
     renderMt5Inbox();
+    renderMt5BridgeStatus();
     return;
   }
 
@@ -2132,7 +2265,11 @@ async function fetchMt5DetectedOrders(options = {}) {
   }
 
   if (!silent) {
-    setMt5InboxState("loading", reviewMode ? "Loading MT5 history from Supabase." : "Checking Supabase for new closed positions.");
+    setMt5InboxState(
+      "loading",
+      reviewMode ? "Loading MT5 history from Supabase." : "Checking Supabase for new closed positions.",
+      { mode: reviewMode ? "history" : "live" }
+    );
   }
 
   let response;
@@ -2158,6 +2295,9 @@ async function fetchMt5DetectedOrders(options = {}) {
   try {
     const previousCount = mt5DetectedOrders.length;
     const fetchedOrders = Array.isArray(data) ? data : [];
+    mt5LastFetchAt = new Date().toISOString();
+    updateMt5LastOrderFromFetched(fetchedOrders);
+    renderMt5BridgeStatus();
     if (reviewMode) {
       const reviewOrders = fetchedOrders.filter((order) => {
         const orderDate = orderDateKeyForHistoryReview(order);
@@ -2171,7 +2311,9 @@ async function fetchMt5DetectedOrders(options = {}) {
       mt5InboxState = {
         kind: mt5DetectedOrders.length ? "ready" : "empty",
         mode: "history",
-        message: mt5DetectedOrders.length ? "" : "No MT5 orders found in that history period."
+        message: mt5DetectedOrders.length
+          ? ""
+          : "No MT5 orders found in that history period. Recorded, ignored, and deleted journal trades will appear here when MT5 has uploaded them."
       };
       renderMt5Inbox();
       if (!silent) showToast("History display loaded " + mt5DetectedOrders.length + " " + (mt5DetectedOrders.length === 1 ? "order" : "orders") + ".");
@@ -2563,7 +2705,13 @@ async function markMt5OrderStatus(orderId, status = "recorded") {
 
   mt5DetectedOrders = mt5DetectedOrders.filter((order) => order.id !== orderId);
   if (!mt5DetectedOrders.length && mt5InboxState.kind === "ready") {
-    mt5InboxState = { kind: "empty", message: status === "ignored" ? "Ignored order hidden. Use Display History to see it again." : "No orders waiting." };
+    mt5InboxState = {
+      kind: "empty",
+      mode: mt5InboxReviewMode() ? "history" : "live",
+      message: status === "ignored"
+        ? "Ignored order hidden from this inbox. Use Display History to see it again."
+        : "No orders waiting."
+    };
   }
   renderMt5Inbox();
 }
@@ -2576,6 +2724,9 @@ async function ignoreAlreadyRecordedMt5Orders() {
     showToast("No already recorded MT5 orders to ignore.");
     return;
   }
+
+  const ok = confirm(`Hide ${ids.length} already-recorded MT5 ${ids.length === 1 ? "order" : "orders"} from this inbox? Display History can show them again later.`);
+  if (!ok) return;
 
   recordedOrders.forEach(hideMt5OrderFromRealtime);
   const { error } = await supabaseClient
@@ -2591,7 +2742,11 @@ async function ignoreAlreadyRecordedMt5Orders() {
 
   mt5DetectedOrders = mt5DetectedOrders.filter((order) => !ids.includes(order.id));
   if (!mt5DetectedOrders.length) {
-    mt5InboxState = { kind: "empty", message: "Already recorded MT5 orders are hidden. Use Display History to review the full period again." };
+    mt5InboxState = {
+      kind: "empty",
+      mode: mt5InboxReviewMode() ? "history" : "live",
+      message: "Already recorded MT5 orders are hidden from this inbox. Use Display History to review the full period again."
+    };
   }
   renderMt5Inbox();
   showToast("Ignored " + ids.length + " already recorded MT5 " + (ids.length === 1 ? "order." : "orders."));
@@ -2620,7 +2775,11 @@ async function ignoreVisibleMt5Orders() {
   }
 
   mt5DetectedOrders = [];
-  mt5InboxState = { kind: "empty", message: "Ignored visible MT5 orders are hidden. Use Display History to review the full period again." };
+  mt5InboxState = {
+    kind: "empty",
+    mode: mt5InboxReviewMode() ? "history" : "live",
+    message: "Ignored visible MT5 orders are hidden from this inbox. Use Display History to review the full period again."
+  };
   renderMt5Inbox();
   showToast(`Ignored ${ids.length} visible MT5 ${ids.length === 1 ? "order." : "orders."}`);
 }
@@ -2630,54 +2789,56 @@ function mt5OrderInboxStatus(order) {
   const status = String(order.status || "new").toLowerCase();
   if (alreadyRecorded) {
     return {
-      label: "Already recorded",
+      label: "Already in journal",
       className: "recorded",
       disableRecord: true,
-      recordText: "Recorded"
+      recordText: "In Journal",
+      hint: "This MT5 order already matches a Trade History record."
     };
   }
   if (status === "recorded") {
     return {
-      label: "Journal entry missing",
+      label: "Deleted / record again",
       className: "missing",
       disableRecord: false,
-      recordText: "Record again"
+      recordText: "Record again",
+      hint: "MT5 says this was recorded before, but it is not in Trade History now."
     };
   }
   if (status === "ignored") {
     return {
-      label: "Hidden in live",
+      label: "Ignored in live",
       className: "ignored",
       disableRecord: false,
-      recordText: "Record again"
+      recordText: "Record again",
+      hint: "This order is hidden from live scan but can still be recorded from Display History."
     };
   }
   return {
     label: "New",
     className: "new",
     disableRecord: false,
-    recordText: "Record"
+    recordText: "Record",
+    hint: "New closed position waiting for review."
   };
 }
 
 function renderMt5InboxSummary() {
   if (!mt5DetectedOrders.length) return "";
-  const reviewMode = mt5InboxState.mode === "history" || mt5HistoryReviewRange.active;
+  const reviewMode = mt5InboxReviewMode();
   const alreadyRecordedCount = mt5DetectedOrders.filter((order) => Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order))).length;
   const recordAgainCount = mt5DetectedOrders.filter((order) => {
     const status = String(order.status || "new").toLowerCase();
     return !Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order)) && (status === "recorded" || status === "ignored");
   }).length;
-  const rangeText = mt5HistoryReviewRange.start || mt5HistoryReviewRange.end
-    ? `${mt5HistoryReviewRange.start || "Start"} to ${mt5HistoryReviewRange.end || "Latest"}`
-    : "selected period";
+  const rangeText = mt5HistoryRangeLabel();
   const duplicateNote = mt5InboxState.duplicateCount
     ? ` ${mt5InboxState.duplicateCount} already-recorded ${mt5InboxState.duplicateCount === 1 ? "order was" : "orders were"} hidden from live scan.`
     : "";
   const title = reviewMode ? "History review" : "Live scan";
   const copy = reviewMode
-    ? `Showing MT5 history for ${rangeText}, including recorded and ignored orders. Deleted journal trades can be recorded again here.`
-    : `Showing new MT5 closed positions only.${duplicateNote} Use Display History to review recorded or ignored orders.`;
+    ? `Showing MT5 history for ${rangeText}, including recorded and ignored orders. If a journal trade was deleted, use Record again here.`
+    : `Showing new MT5 closed positions only.${duplicateNote} Recorded and ignored orders stay hidden until Display History is used.`;
   const stats = [
     `${mt5DetectedOrders.length} shown`,
     alreadyRecordedCount ? `${alreadyRecordedCount} already recorded` : "",
@@ -2694,15 +2855,65 @@ function renderMt5InboxSummary() {
   `;
 }
 
+function mt5InboxEmptyStateCopy() {
+  if (!cloudUser) {
+    return {
+      title: "Cloud sign in required",
+      message: "Sign in before MT5 can send closed positions to this profile.",
+      hints: ["Open the account panel, then sign in with email or Google."]
+    };
+  }
+  if (!activeMt5BridgeTokens().length) {
+    return {
+      title: "Bridge token needed",
+      message: "Create a PC or Mobile token before MT5 can send closed positions.",
+      hints: ["Generate one token for each PC, phone, VPS, or relay.", "After creating a PC token, paste it into the MT5 EA inputs."]
+    };
+  }
+  if (mt5InboxState.kind === "error") {
+    return {
+      title: "Could not refresh MT5 orders",
+      message: mt5InboxState.message || "Supabase or the MT5 bridge could not be reached.",
+      hints: ["Check internet/Supabase, then press Refresh.", "For MT5 desktop, confirm Tools > Options > Expert Advisors allows the Supabase URL."]
+    };
+  }
+  if (mt5InboxState.kind === "loading") {
+    return {
+      title: "Checking MT5 orders",
+      message: mt5InboxState.message || "Loading MT5 orders from Supabase.",
+      hints: []
+    };
+  }
+  if (mt5HistoryReviewRange.active || mt5InboxState.mode === "history") {
+    return {
+      title: "No history orders found",
+      message: mt5InboxState.message || "No MT5 orders matched this display-history period.",
+      hints: ["Confirm the From/To dates include the close time.", "Display History shows recorded, ignored, and deleted-from-journal orders when MT5 has uploaded them.", "Keep the MT5 PC bridge online if the history request is still pending."]
+    };
+  }
+  return {
+    title: "No orders waiting",
+    message: mt5InboxState.message || "Closed MT5 positions will appear here before you record them.",
+    hints: ["Live scan hides already-recorded and ignored orders.", "Use Display History to review recorded, ignored, or deleted journal trades again.", "Each user must generate their own private bridge token."]
+  };
+}
+
+function mt5InboxHintsMarkup(hints) {
+  if (!hints?.length) return "";
+  return `<div class="mt5-inbox-hints">${hints.map((hint) => `<span>${escapeHtml(hint)}</span>`).join("")}</div>`;
+}
+
 function renderMt5Inbox() {
   const panel = $("#mt5InboxPanel");
   const list = $("#mt5InboxList");
   if (!panel || !list) return;
+  renderMt5InboxModeBadge();
+  renderMt5RefreshButton();
   const ignoreAllButton = $("#ignoreAllMt5OrdersBtn");
   const ignoreRecordedButton = $("#ignoreRecordedMt5OrdersBtn");
   const hasOrders = Boolean(mt5DetectedOrders.length);
   const recordedCount = mt5DetectedOrders.filter((order) => Boolean(order.alreadyRecorded || isMt5OrderAlreadyRecorded(order))).length;
-  const showPanel = Boolean(cloudUser && (hasOrders || mt5InboxState.kind !== "idle"));
+  const showPanel = Boolean(cloudUser);
   panel.classList.toggle("hidden", !showPanel);
   if (ignoreAllButton) {
     ignoreAllButton.classList.toggle("hidden", !showPanel || !hasOrders);
@@ -2721,12 +2932,12 @@ function renderMt5Inbox() {
 
   if (!hasOrders) {
     const tone = mt5InboxState.kind === "error" ? "error" : mt5InboxState.kind === "loading" ? "loading" : "empty";
-    const title = mt5InboxState.kind === "error" ? "Could not refresh MT5 orders" : mt5InboxState.kind === "loading" ? "Checking MT5 orders" : "No orders waiting";
-    const message = mt5InboxState.message || "Closed MT5 positions will appear here before you record them.";
+    const emptyCopy = mt5InboxEmptyStateCopy();
     list.innerHTML = [
       '<div class="mt5-inbox-state ' + escapeHtml(tone) + '">',
-      '<strong>' + escapeHtml(title) + '</strong>',
-      '<p>' + escapeHtml(message) + '</p>',
+      '<strong>' + escapeHtml(emptyCopy.title) + '</strong>',
+      '<p>' + escapeHtml(emptyCopy.message) + '</p>',
+      mt5InboxHintsMarkup(emptyCopy.hints),
       '</div>'
     ].join("");
     return;
@@ -2738,6 +2949,7 @@ function renderMt5Inbox() {
     .map((order) => {
       const direction = String(order.direction || "Buy").toLowerCase() === "sell" ? "Sell" : "Buy";
       const source = mt5OrderSource(order);
+      const reviewMode = mt5InboxReviewMode();
       const pl = parseOptionalNumber(order.profit);
       const commission = parseOptionalNumber(order.commission) ?? 0;
       const swap = parseOptionalNumber(order.swap) ?? 0;
@@ -2751,10 +2963,12 @@ function renderMt5Inbox() {
           <div>
             <strong>${escapeHtml(normalizeBrokerSymbol(order.symbol))}
               <span class="mt5-pill ${direction.toLowerCase()}">${escapeHtml(direction)}</span>
+              <span class="mt5-mode-pill ${reviewMode ? "history" : "live"}">${reviewMode ? "History" : "Live"}</span>
               <span class="mt5-source-pill ${escapeHtml(mt5SourceClass(source))}">${escapeHtml(source)}</span>
-              <span class="mt5-review-pill ${escapeHtml(inboxStatus.className)}">${escapeHtml(inboxStatus.label)}</span>
+              <span class="mt5-review-pill ${escapeHtml(inboxStatus.className)}" title="${escapeHtml(inboxStatus.hint)}">${escapeHtml(inboxStatus.label)}</span>
             </strong>
-            <p>${escapeHtml(mt5OrderDisplayDateTime(order, "closed"))} | ${numberFormatter.format(toNumber(order.lot_size))} lot | Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
+            <p>Open ${escapeHtml(mt5OrderDisplayDateTime(order, "open"))} | Close ${escapeHtml(mt5OrderDisplayDateTime(order, "closed"))} | ${numberFormatter.format(toNumber(order.lot_size))} lot</p>
+            <p>Entry ${rateFormatter.format(toNumber(order.entry_price))} -> Exit ${rateFormatter.format(toNumber(order.exit_price))}</p>
             <p>${pl === null ? "P/L pending" : currencyFormatter.format(pl)} | Stop ${escapeHtml(stopText)} | Target ${escapeHtml(targetText)} | Commission ${currencyFormatter.format(commission)} | Swap ${currencyFormatter.format(swap)}</p>
           </div>
           <div class="mt5-order-actions">
@@ -7014,11 +7228,12 @@ function renderBestProfile(stats) {
     container.dataset.setup = "";
     container.dataset.pair = "";
     container.dataset.session = "";
+    container.classList.add("compact-profile-grid");
     container.innerHTML = `
-      <article class="profile-item"><strong>Setup</strong><p>No profile yet</p></article>
-      <article class="profile-item"><strong>Sample</strong><p>0 trades</p></article>
-      <article class="profile-item"><strong>Average</strong><p>0.00R</p></article>
-      <article class="profile-item"><strong>Discipline</strong><p>0%</p></article>
+      <article class="profile-item profile-primary"><strong>Setup</strong><p>No profile yet</p><small>Record at least two trades to build a best profile.</small></article>
+      <article class="profile-item profile-metric"><strong>Sample</strong><p>0 trades</p></article>
+      <article class="profile-item profile-metric"><strong>Average</strong><p>0.00R</p></article>
+      <article class="profile-item profile-metric"><strong>Discipline</strong><p>0%</p></article>
     `;
     return;
   }
@@ -7027,13 +7242,16 @@ function renderBestProfile(stats) {
   container.dataset.setup = setup || "";
   container.dataset.pair = pair || "";
   container.dataset.session = session || "";
+  container.classList.add("compact-profile-grid");
   container.innerHTML = `
-    <article class="profile-item"><strong>Setup</strong><p>${escapeHtml(setup || profile.name)}</p></article>
-    <article class="profile-item"><strong>Pair</strong><p>${escapeHtml(pair || "Any")}</p></article>
-    <article class="profile-item"><strong>Session</strong><p>${escapeHtml(session || "Any")}</p></article>
-    <article class="profile-item"><strong>Average</strong><p>${formatR(profile.avgR)}</p></article>
-    <article class="profile-item"><strong>Sample</strong><p>${profile.count} trades</p></article>
-    <article class="profile-item"><strong>Discipline</strong><p>${formatPercent(profile.discipline)}</p></article>
+    <article class="profile-item profile-primary">
+      <strong>Setup</strong>
+      <p>${escapeHtml(setup || profile.name)}</p>
+      <small>${escapeHtml(pair || "Any pair")} · ${escapeHtml(session || "Any session")}</small>
+    </article>
+    <article class="profile-item profile-metric"><strong>Average</strong><p>${formatR(profile.avgR)}</p></article>
+    <article class="profile-item profile-metric"><strong>Sample</strong><p>${profile.count} trades</p></article>
+    <article class="profile-item profile-metric"><strong>Discipline</strong><p>${formatPercent(profile.discipline)}</p></article>
   `;
 }
 
@@ -7242,7 +7460,7 @@ function renderStrategies() {
               <p>${escapeHtml(strategy.linkedSetup || "Manual strategy")} · ${escapeHtml(strategy.setupType || "Custom / Other")}</p>
             </div>
             <div class="strategy-actions">
-              ${strategy.linkedSetup ? `<button class="mini-button" title="Update from setup profile" aria-label="Update from setup profile" data-strategy-action="refresh" data-id="${strategy.id}">Sync</button>` : ""}
+              ${strategy.linkedSetup ? `<button class="mini-button text-mini sync-button" title="Update from setup profile" aria-label="Update from setup profile" data-strategy-action="refresh" data-id="${strategy.id}">Sync</button>` : ""}
               <button class="mini-button" title="Edit strategy" aria-label="Edit strategy" data-strategy-action="edit" data-id="${strategy.id}">${iconMarkup("edit")}</button>
               <button class="mini-button danger" title="Delete strategy" aria-label="Delete strategy" data-strategy-action="delete" data-id="${strategy.id}">${iconMarkup("trash")}</button>
             </div>
@@ -7687,7 +7905,8 @@ function iconMarkup(name) {
     edit: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
     trash: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M9 11v6M15 11v6M6 6l1 15h10l1-15"/></svg>',
     save: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM7 21v-8h10v8M7 3v5h8"/></svg>',
-    cloud: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>'
+    cloud: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
+    refresh: '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 0 15 6.7M21 20v-6h-6M21 12A9 9 0 0 0 6 5.3M3 4v6h6"/></svg>'
   };
   return icons[name] || "";
 }

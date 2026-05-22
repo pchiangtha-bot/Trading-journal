@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=114">
+  <link rel="stylesheet" href="styles.css?v=121">
 </head>
 <body>
   <div class="app-shell">
@@ -149,6 +149,8 @@
             <button class="mini-button text-mini" type="button" id="generateMt5MobileTokenBtn">Mobile</button>
             <button class="mini-button text-mini" type="button" id="openMt5DesktopSetupBtn">Desktop setup</button>
           </div>
+          <div class="mt5-bridge-status" id="mt5BridgeStatus" aria-live="polite"></div>
+          <p class="mt5-bridge-help">Each signed-in user gets private bridge tokens. Use one token per PC, phone, VPS, or relay. Revoking a token stops only that device.</p>
           <div class="history-sync-controls" aria-label="MT5 history sync period">
             <label>
               <span>From</span>
@@ -402,6 +404,7 @@
               <h3 id="mt5-inbox-title">Detected Closed Positions</h3>
             </div>
           <div class="mt5-inbox-header-actions">
+              <span class="mt5-inbox-mode-badge live" id="mt5InboxModeBadge">Live scan</span>
               <button class="tool-button hidden" type="button" id="ignoreAllMt5OrdersBtn">
                 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M9 11v6M15 11v6M6 6l1 15h10l1-15"/></svg>
                 Ignore all
@@ -1720,6 +1723,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=114"></script>
+  <script src="app.js?v=121"></script>
 </body>
 </html>

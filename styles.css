@@ -422,13 +422,80 @@ button {
 
 .bridge-action-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
   gap: 6px;
 }
 
 .bridge-action-row .mini-button {
   width: 100%;
   min-height: 34px;
+}
+
+.mt5-bridge-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.mt5-bridge-status-item {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+}
+
+.mt5-bridge-status-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.mt5-bridge-status-item strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 0.76rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.mt5-bridge-status-item.health-ready strong {
+  color: var(--teal);
+}
+
+.mt5-bridge-status-item.health-warning strong {
+  color: var(--amber);
+}
+
+.mt5-bridge-status-item.health-error strong {
+  color: var(--red);
+}
+
+.mt5-bridge-status-item.mode-live strong {
+  color: var(--teal);
+}
+
+.mt5-bridge-status-item.mode-history strong,
+.mt5-bridge-status-item.mode-loading strong {
+  color: var(--amber);
+}
+
+.mt5-bridge-status-item.mode-error strong {
+  color: var(--red);
+}
+
+.mt5-bridge-help {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--teal) 22%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--teal-soft) 68%, transparent);
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .history-sync-controls {
@@ -1047,9 +1114,27 @@ body[data-auth-page="true"] #loginView.active {
   display: grid;
   place-items: start center;
   padding: 24px;
-  overflow: auto;
+  overflow: hidden;
+  background: transparent;
+  isolation: isolate;
+}
+
+.trade-ticket-overlay::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
   background: rgba(5, 8, 8, 0.58);
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: background 140ms ease, backdrop-filter 140ms ease;
+}
+
+.trade-ticket-overlay.is-scrolling::before {
+  background: rgba(5, 8, 8, 0.64);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
 }
 
 .trade-ticket-overlay.hidden {
@@ -1057,20 +1142,39 @@ body[data-auth-page="true"] #loginView.active {
 }
 
 .trade-ticket-modal-card {
+  position: relative;
+  z-index: 1;
   width: min(960px, 100%);
   max-height: calc(100vh - 48px);
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-color: var(--hover-border);
+  contain: layout paint;
+  transform: translateZ(0);
 }
 
 .trade-ticket-modal-card > .panel-header {
-  position: sticky;
-  top: -18px;
+  position: relative;
+  flex: 0 0 auto;
+  top: auto;
   z-index: 2;
   margin: -18px -18px 0;
   padding: 18px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+}
+
+.trade-ticket-modal-card > .trade-form {
+  min-height: 0;
+  margin: 0 -18px -18px;
+  padding: 16px 18px 18px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  contain: layout paint;
+  touch-action: pan-y;
+  will-change: scroll-position;
 }
 
 .trade-ticket-modal-actions {
@@ -1106,6 +1210,38 @@ body[data-auth-page="true"] #loginView.active {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  align-items: center;
+}
+
+.mt5-inbox-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--teal);
+  background: var(--teal-soft);
+  font-size: 0.8rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.mt5-inbox-mode-badge.history,
+.mt5-inbox-mode-badge.loading {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.mt5-inbox-mode-badge.error {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.mt5-inbox-mode-badge.muted {
+  color: var(--muted);
+  background: var(--neutral-soft);
 }
 
 .table-header-actions {
@@ -1132,6 +1268,23 @@ body[data-auth-page="true"] #loginView.active {
   color: var(--muted);
   font-size: 0.8rem;
   line-height: 1.4;
+}
+
+.mt5-inbox-hints {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.mt5-inbox-hints span {
+  display: block;
 }
 
 .mt5-inbox-state.error {
@@ -1246,6 +1399,24 @@ body[data-auth-page="true"] #loginView.active {
   background: var(--blue-soft);
   font-size: 0.72rem;
   font-weight: 900;
+}
+
+.mt5-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-left: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--teal);
+  background: var(--teal-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.mt5-mode-pill.history {
+  color: var(--amber);
+  background: var(--amber-soft);
 }
 
 .mt5-source-pill.android {
@@ -2639,7 +2810,7 @@ td {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 16px;
-  align-items: stretch;
+  align-items: start;
   width: 100%;
   grid-auto-flow: row dense;
 }
@@ -2647,7 +2818,7 @@ td {
 .strategy-grid > .panel,
 .checklist-grid > .panel {
   min-width: 0;
-  height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2656,31 +2827,82 @@ td {
 .strategy-profile-panel,
 .setup-profile-panel {
   grid-column: span 4;
-  min-height: 392px;
+  min-height: 0;
 }
 
 .setup-profile-panel {
   grid-column: span 8;
+  min-height: clamp(300px, 32vh, 420px);
 }
 
 .strategy-builder-panel {
   grid-column: span 6;
   grid-row: auto;
-  min-height: clamp(640px, 72vh, 860px);
+  min-height: clamp(560px, 62vh, 760px);
 }
 
 .strategy-list-panel {
   grid-column: span 6;
   grid-row: auto;
-  min-height: clamp(640px, 72vh, 860px);
+  min-height: clamp(560px, 62vh, 760px);
 }
 
 .profile-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  flex: 0 0 auto;
+  align-content: start;
+}
+
+.strategy-profile-panel {
+  align-self: start;
+  height: auto;
+}
+
+.strategy-profile-panel .panel-header {
   gap: 12px;
-  flex: 1 1 auto;
-  align-content: stretch;
+}
+
+.strategy-profile-panel .tool-button {
+  min-width: 118px;
+  white-space: nowrap;
+}
+
+.strategy-profile-panel .profile-item {
+  min-height: 74px;
+  padding: 10px;
+}
+
+.profile-item.profile-primary {
+  grid-column: 1 / -1;
+  min-height: auto;
+}
+
+.profile-item.profile-primary p {
+  color: var(--ink);
+  font-weight: 850;
+  line-height: 1.3;
+}
+
+.profile-item.profile-primary small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.profile-item.profile-metric {
+  display: grid;
+  align-content: center;
+}
+
+.profile-item.profile-metric p {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 850;
 }
 
 .setup-profile-list {
@@ -2690,7 +2912,7 @@ td {
   margin-top: 14px;
   flex: 1 1 auto;
   min-height: 0;
-  max-height: none;
+  max-height: clamp(230px, 28vh, 340px);
   overflow: auto;
   padding-right: 4px;
   align-content: start;
@@ -2705,10 +2927,12 @@ td {
 .strategy-builder-panel .strategy-form {
   display: grid;
   align-content: start;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .strategy-list-panel .strategy-list {
-  max-height: none;
+  max-height: clamp(480px, 56vh, 650px);
   overflow: auto;
   padding-right: 4px;
 }
@@ -2836,7 +3060,14 @@ td {
 .strategy-actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
+}
+
+.strategy-actions .sync-button {
+  min-width: 54px;
+  padding: 0 9px;
+  white-space: nowrap;
 }
 
 .strategy-stat-row {
@@ -2886,7 +3117,7 @@ td {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 18px;
-  align-items: stretch;
+  align-items: start;
   width: 100%;
   grid-auto-flow: row dense;
 }
@@ -2898,7 +3129,7 @@ td {
 
 .checklist-grid > .rule-panel {
   grid-column: span 4;
-  min-height: clamp(500px, 50vh, 620px);
+  min-height: clamp(420px, 44vh, 560px);
 }
 
 .checklist-grid > .daily-template-panel,
@@ -2978,6 +3209,10 @@ td {
 .rule-panel .rule-checklist {
   flex: 1 1 auto;
   align-content: start;
+  min-height: 0;
+  max-height: clamp(300px, 34vh, 440px);
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .rule-panel .check-card {
@@ -3063,16 +3298,17 @@ td {
 
 .daily-template-grid {
   display: grid;
-  grid-template-columns: minmax(280px, 0.38fr) minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(360px, 0.42fr) minmax(0, 1fr);
+  gap: 16px;
   margin-top: 14px;
-  align-items: start;
+  align-items: stretch;
   width: 100%;
   overflow: visible;
 }
 
 .daily-review-section {
   min-width: 0;
+  align-self: stretch;
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -3094,6 +3330,7 @@ td {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   grid-column: 1;
+  align-content: start;
 }
 
 .daily-note-field {
@@ -3125,6 +3362,7 @@ td {
   gap: 12px;
   background: color-mix(in srgb, var(--surface-strong) 88%, var(--teal) 4%);
   min-width: 0;
+  min-height: clamp(540px, 58vh, 780px);
 }
 
 .chart-evidence-header {
@@ -3156,7 +3394,7 @@ td {
 
 .chart-evidence-empty {
   grid-column: 1 / -1;
-  min-height: clamp(420px, 48vh, 720px);
+  min-height: clamp(460px, 50vh, 720px);
   display: grid;
   place-items: center;
   border: 1px dashed var(--border-strong);
@@ -3181,7 +3419,7 @@ td {
 .chart-evidence-open {
   grid-column: 1 / -1;
   width: 100%;
-  min-height: clamp(420px, 48vh, 720px);
+  min-height: clamp(460px, 50vh, 720px);
   padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -3397,7 +3635,7 @@ td {
   }
 
   .daily-template-grid {
-    grid-template-columns: minmax(280px, 0.36fr) minmax(0, 1fr);
+    grid-template-columns: minmax(340px, 0.42fr) minmax(0, 1fr);
   }
 
   .daily-review-summary {
@@ -3427,7 +3665,7 @@ td {
 
 @media (max-width: 1320px) {
   .daily-template-grid {
-    grid-template-columns: minmax(260px, 0.4fr) minmax(0, 1fr);
+    grid-template-columns: minmax(320px, 0.42fr) minmax(0, 1fr);
   }
 
   .chart-evidence-empty,
@@ -3715,6 +3953,14 @@ td {
   display: block;
 }
 
+.bridge-token-card small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.3;
+}
+
 .bridge-token-card strong {
   color: var(--ink);
   line-height: 1.25;
@@ -3744,6 +3990,22 @@ td {
 .bridge-token-status.revoked {
   color: var(--red);
   background: var(--red-soft);
+}
+
+.bridge-token-status.live {
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.bridge-token-status.waiting,
+.bridge-token-status.standby {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.bridge-token-status.idle {
+  color: var(--muted);
+  background: var(--neutral-soft);
 }
 
 .profile-danger-section {
@@ -3939,6 +4201,9 @@ td {
   .checklist-grid > .rule-panel .rule-checklist,
   .checklist-grid > .rule-panel:nth-of-type(4) .rule-checklist.two-column {
     grid-template-columns: 1fr;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 }
 
@@ -3969,6 +4234,11 @@ td {
 
   .trade-ticket-modal-card {
     max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .trade-ticket-modal-card > .trade-form {
+    padding: 14px 18px 18px;
   }
 
   .profile-card {
