@@ -1094,7 +1094,7 @@ function syncProfileManagementUi() {
       : signedInCloud
         ? "Use Cloud Profile"
         : "Sign in to Sync";
-    openCloudButton.disabled = activeCloud || (!activeAccount && !signedInCloud);
+    openCloudButton.disabled = false;
     openCloudButton.innerHTML = `${iconMarkup("cloud")} ${label}`;
   }
   const cloudHelp = $("#profileCloudHelp");
@@ -1904,12 +1904,14 @@ function cloneJson(value, fallback) {
 }
 
 function currentJournalSnapshot(profileName = activeAccount?.name || "Cloud profile") {
+  const snapshotSettings = cloneJson(settings, { ...defaultSettings });
+  snapshotSettings.dailyReviewEvidence = normalizeDailyEvidenceStore(dailyEvidenceStore());
   return {
     profileName,
     trades: cloneJson(trades, []),
     strategies: cloneJson(strategies, []),
     customPairs: cloneJson(customPairs, []),
-    settings: cloneJson(settings, { ...defaultSettings })
+    settings: snapshotSettings
   };
 }
 
@@ -1936,9 +1938,13 @@ function applyCloudProfileRow(row, message = "") {
     }
 
     customPairs = normalizeCloudPairs(row.custom_pairs);
+    const incomingSettings = row.settings && typeof row.settings === "object" ? { ...row.settings } : {};
+    const incomingEvidence = normalizeDailyEvidenceStore(incomingSettings.dailyReviewEvidence);
+    delete incomingSettings.dailyReviewEvidence;
+
     settings = {
       ...defaultSettings,
-      ...(row.settings && typeof row.settings === "object" ? row.settings : {})
+      ...incomingSettings
     };
     normalizeSettingsLists();
     analyticsRange = settings.analyticsRange || "all";
@@ -1963,10 +1969,12 @@ function applyCloudProfileRow(row, message = "") {
     );
 
     strategies = Array.isArray(row.strategies) ? row.strategies : [];
+    const mergedEvidence = mergeDailyEvidenceStores(dailyEvidenceStore(), incomingEvidence);
     saveCustomPairs();
     saveSettings();
     saveTrades();
     saveStrategies();
+    saveDailyEvidenceStore(mergedEvidence);
   } finally {
     isApplyingCloudSnapshot = false;
   }
@@ -3330,6 +3338,7 @@ async function syncProfileNow() {
     return;
   }
   try {
+    showToast("Syncing this device with your cloud profile...");
     await upsertCloudSnapshot(currentJournalSnapshot(), "manual");
     await fetchCloudProfile({ apply: true, createIfMissing: true, silent: true });
     await fetchMt5DetectedOrders({ silent: true });
@@ -3338,6 +3347,21 @@ async function syncProfileNow() {
   } catch (error) {
     showToast(friendlyCloudError(error));
   }
+}
+
+async function handleProfileOpenCloudClick() {
+  if (isActiveCloudProfile()) {
+    showToast("Cloud Profile Active: this device is already using your synced cloud journal.");
+    return;
+  }
+  if (!cloudUser) {
+    showToast("Sign in with email or Google to open your cloud profile.");
+    showAuthOverlay("cloud", false);
+    return;
+  }
+  showToast("Opening latest cloud profile...");
+  await openCloudProfile();
+  syncProfileManagementUi();
 }
 
 function timeInZone(timeZone, date = new Date()) {
@@ -4158,9 +4182,46 @@ function dailyEvidenceStore() {
   return store && typeof store === "object" && !Array.isArray(store) ? store : {};
 }
 
+function normalizeDailyEvidenceStore(store = {}) {
+  if (!store || typeof store !== "object" || Array.isArray(store)) return {};
+  return Object.entries(store).reduce((next, [date, items]) => {
+    const key = String(date || "").slice(0, 10);
+    if (!key || !Array.isArray(items)) return next;
+    const normalizedItems = items
+      .map(normalizeDailyEvidenceItem)
+      .filter((item) => item.dataUrl.startsWith("data:image/"))
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+      .slice(0, 2);
+    if (normalizedItems.length) next[key] = normalizedItems;
+    return next;
+  }, {});
+}
+
+function mergeDailyEvidenceStores(...stores) {
+  const merged = {};
+  stores.forEach((store) => {
+    const normalized = normalizeDailyEvidenceStore(store);
+    Object.entries(normalized).forEach(([date, items]) => {
+      const map = new Map((merged[date] || []).map((item) => [item.id || item.dataUrl, item]));
+      items.forEach((item) => {
+        const key = item.id || item.dataUrl;
+        const existing = map.get(key);
+        if (!existing || String(item.createdAt || "").localeCompare(String(existing.createdAt || "")) > 0) {
+          map.set(key, item);
+        }
+      });
+      merged[date] = [...map.values()]
+        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+        .slice(0, 2);
+    });
+  });
+  return merged;
+}
+
 function saveDailyEvidenceStore(store) {
   try {
-    localStorage.setItem(accountScopedKey(storageKeys.dailyReviewEvidence), JSON.stringify(store));
+    localStorage.setItem(accountScopedKey(storageKeys.dailyReviewEvidence), JSON.stringify(normalizeDailyEvidenceStore(store)));
+    queueCloudSave("evidence");
     return true;
   } catch (error) {
     showToast("Screenshot storage is full. Remove an old screenshot or use a smaller image.");
@@ -7840,9 +7901,11 @@ function exportJsonBackup() {
     strategies,
     customPairs,
     settings,
+    dailyReviewEvidence: dailyEvidenceStore(),
     exportedAt: new Date().toISOString()
   }, null, 2);
   downloadFile("fx-edge-journal.json", content, "application/json");
+  showToast("Backup JSON exported.");
 }
 
 function exportCsv() {
@@ -7873,9 +7936,16 @@ function importJson(file) {
         parsed.customPairs.forEach((pair) => ensurePairAvailable(pair.symbol, pair.contractSize));
       }
       if (parsed.settings && typeof parsed.settings === "object") {
-        Object.assign(settings, parsed.settings);
+        const importedSettings = { ...parsed.settings };
+        const importedEvidence = importedSettings.dailyReviewEvidence || parsed.dailyReviewEvidence;
+        delete importedSettings.dailyReviewEvidence;
+        Object.assign(settings, importedSettings);
         normalizeSettingsLists();
         saveSettings();
+        if (importedEvidence) saveDailyEvidenceStore(mergeDailyEvidenceStores(dailyEvidenceStore(), importedEvidence));
+      }
+      if (parsed.dailyReviewEvidence && !parsed.settings?.dailyReviewEvidence) {
+        saveDailyEvidenceStore(mergeDailyEvidenceStores(dailyEvidenceStore(), parsed.dailyReviewEvidence));
       }
       parsed.trades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
       trades = parsed.trades.map((trade) =>
@@ -7930,6 +8000,7 @@ function iconMarkup(name) {
 
 function showToast(message) {
   const toast = $("#toast");
+  if (!toast) return;
   toast.textContent = message;
   toast.classList.add("visible");
   clearTimeout(showToast.timer);
@@ -7947,7 +8018,7 @@ function mt5AppLaunchTarget() {
 }
 
 function mt5DesktopSetupCommand() {
-  return 'powershell -ExecutionPolicy Bypass -File ".\\windows\\register-fxedge-mt5-protocol.ps1"';
+  return 'windows\\install-fxedge-mt5-protocol.bat';
 }
 
 function isMt5DesktopProtocolInstalled() {
@@ -8034,16 +8105,26 @@ function bindEvents() {
   if (profileSyncButton) profileSyncButton.addEventListener("click", syncProfileNow);
 
   const profileOpenCloudButton = $("#profileOpenCloudBtn");
-  if (profileOpenCloudButton) profileOpenCloudButton.addEventListener("click", () => openCloudProfile());
+  if (profileOpenCloudButton) profileOpenCloudButton.addEventListener("click", handleProfileOpenCloudClick);
 
   const profileMigrateButton = $("#profileMigrateBtn");
-  if (profileMigrateButton) profileMigrateButton.addEventListener("click", migrateActiveAccountToCloud);
+  if (profileMigrateButton) {
+    profileMigrateButton.addEventListener("click", () => {
+      showToast("Checking cloud target before transfer...");
+      migrateActiveAccountToCloud();
+    });
+  }
 
   const profileExportJsonButton = $("#profileExportJsonBtn");
   if (profileExportJsonButton) profileExportJsonButton.addEventListener("click", exportJsonBackup);
 
   const profileImportJsonButton = $("#profileImportJsonBtn");
-  if (profileImportJsonButton) profileImportJsonButton.addEventListener("click", () => $("#importFile")?.click());
+  if (profileImportJsonButton) {
+    profileImportJsonButton.addEventListener("click", () => {
+      showToast("Choose a JSON backup file to import.");
+      $("#importFile")?.click();
+    });
+  }
 
   const profileExportCsvButton = $("#profileExportCsvBtn");
   if (profileExportCsvButton) profileExportCsvButton.addEventListener("click", exportFilteredCsv);

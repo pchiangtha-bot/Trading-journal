@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=123">
+  <link rel="stylesheet" href="styles.css?v=124">
 </head>
 <body>
   <div class="app-shell">
@@ -1598,7 +1598,7 @@
         <div>
           <p class="eyebrow">One-time desktop installer</p>
           <h3>Connect this browser button to your local MT5 program.</h3>
-          <p>Windows blocks websites from opening `.exe` files directly. This setup registers a safe local link named <strong>fxedge-mt5://open</strong>, then the Market Tools MT5 icon can open your installed `terminal64.exe`.</p>
+          <p>Windows blocks websites from opening `.exe` files directly. This one-file setup registers a safe local link named <strong>fxedge-mt5://open</strong>, then the Market Tools MT5 icon can open your installed `terminal64.exe`.</p>
         </div>
       </div>
 
@@ -1606,12 +1606,12 @@
         <article>
           <span>1</span>
           <strong>Download setup</strong>
-          <p>Save the Windows setup launcher from this app folder.</p>
+          <p>Download the one-file Windows setup launcher.</p>
         </article>
         <article>
           <span>2</span>
           <strong>Run once</strong>
-          <p>Double-click it, or copy the PowerShell command if Windows asks.</p>
+          <p>Double-click it. If MT5 is custom-installed, drag `terminal64.exe` onto the setup file.</p>
         </article>
         <article>
           <span>3</span>
@@ -1622,7 +1622,7 @@
 
       <div class="mt5-setup-command">
         <label>
-          <span>PowerShell command</span>
+          <span>Local command</span>
           <textarea id="mt5DesktopSetupCommand" rows="3" readonly></textarea>
         </label>
       </div>
@@ -1640,7 +1640,7 @@
           I Already Installed
         </button>
       </div>
-      <p class="profile-helper-text">If MT5 is installed in a custom folder, run the PowerShell script with `-Mt5Path` and the exact path to `terminal64.exe`.</p>
+      <p class="profile-helper-text">If MT5 is installed in a custom folder, drag `terminal64.exe` onto the downloaded setup file, or run the setup file with the exact path as its first argument.</p>
     </section>
   </div>
 
@@ -1723,6 +1723,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=123"></script>
+  <script src="app.js?v=124"></script>
 </body>
 </html>
