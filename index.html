@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=128">
+  <link rel="stylesheet" href="styles.css?v=129">
 </head>
 <body>
   <div class="app-shell">
@@ -146,8 +146,12 @@
           </div>
           <div class="bridge-action-row">
             <button class="mini-button text-mini" type="button" id="generateMt5TokenBtn">PC</button>
-            <button class="mini-button text-mini" type="button" id="openMt5DesktopSetupBtn">Desktop setup</button>
+            <button class="mini-button text-mini desktop-setup-button" type="button" id="openMt5DesktopSetupBtn">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H4zM8 19h8M10 15v4M14 15v4"/></svg>
+              MT5 Desktop Setup
+            </button>
           </div>
+          <p class="mt5-desktop-setup-hint">Install once to open MT5 directly from this app on Windows.</p>
           <div class="mt5-bridge-status" id="mt5BridgeStatus" aria-live="polite"></div>
           <p class="mt5-bridge-help">Each signed-in user gets private bridge tokens. Use one token per PC, phone, VPS, or relay. Revoking a token stops only that device.</p>
           <div class="history-sync-controls" aria-label="MT5 history sync period">
@@ -1769,6 +1773,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=128"></script>
+  <script src="app.js?v=129"></script>
 </body>
 </html>
