@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=126">
+  <link rel="stylesheet" href="styles.css?v=127">
 </head>
 <body>
   <div class="app-shell">
@@ -167,6 +167,7 @@
             <span>Android</span>
             <span>Realtime</span>
           </div>
+          <div class="mt5-bridge-copy-grid hidden" id="mt5BridgeCopyGrid" aria-live="polite"></div>
           <textarea id="mt5BridgeOutput" rows="8" readonly placeholder="Generate a PC or Mobile token after cloud sign in."></textarea>
           <button class="tool-button" type="button" id="copyMt5BridgeBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z"/><path d="M6 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
@@ -1501,6 +1502,52 @@
         </div>
       </section>
 
+      <section class="profile-storage-section" id="storageHealthPanel" aria-labelledby="storage-health-title">
+        <div class="panel-header compact">
+          <div>
+            <p class="eyebrow">Storage Health</p>
+            <h3 id="storage-health-title">Screenshot Archive</h3>
+          </div>
+          <span class="sync-badge storage-health-badge ready" id="storageHealthBadge">Healthy</span>
+        </div>
+        <div class="storage-health-meter" aria-hidden="true">
+          <div class="storage-health-fill ready" id="storageHealthFill"></div>
+        </div>
+        <div class="profile-snapshot-grid storage-health-grid">
+          <article>
+            <span>Estimated Used</span>
+            <strong id="storageUsedValue">0 B / 1 GB</strong>
+          </article>
+          <article>
+            <span>Free Plan Use</span>
+            <strong id="storagePercentValue">0%</strong>
+          </article>
+          <article>
+            <span>Evidence Files</span>
+            <strong id="storageEvidenceCountValue">0 screenshots</strong>
+          </article>
+          <article>
+            <span>Cloud / Local</span>
+            <strong id="storageCloudCountValue">0 cloud · 0 local</strong>
+          </article>
+          <article class="storage-wide-stat">
+            <span>Cleanup Candidate</span>
+            <strong id="storageOldCountValue">0 older than 6 months</strong>
+          </article>
+        </div>
+        <p class="profile-helper-text" id="storageHealthHelp">Screenshot storage looks healthy. Full Backup keeps a portable archive.</p>
+        <div class="profile-action-grid storage-health-actions">
+          <button class="tool-button" type="button" id="profileStorageFullBackupBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/><path d="M4 21h16"/></svg>
+            Full Backup First
+          </button>
+          <button class="danger-button" type="button" id="profileCleanOldEvidenceBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M9 11v6M15 11v6M6 6l1 15h10l1-15"/></svg>
+            Clean Old Screenshots
+          </button>
+        </div>
+      </section>
+
       <section class="profile-tool-section" aria-labelledby="profile-tools-title">
         <div>
           <p class="eyebrow">Data Tools</p>
@@ -1601,32 +1648,37 @@
         <div class="mt5-setup-logo" aria-hidden="true">MT5</div>
         <div>
           <p class="eyebrow">One-time desktop installer</p>
-          <h3>Connect this browser button to your local MT5 program.</h3>
-          <p>Windows blocks websites from opening `.exe` files directly. This installer registers a safe local link named <strong>fxedge-mt5://open</strong>, then the Market Tools MT5 icon can open your installed `terminal64.exe`.</p>
+          <h3>Install once, then the MT5 icon opens your desktop platform.</h3>
+          <p>The installer registers a safe local link named <strong>fxedge-mt5://open</strong>. After it is installed, use the MT5 icon in Market Tools instead of opening the MT5 website.</p>
         </div>
       </div>
 
       <div class="mt5-setup-steps" aria-label="MT5 desktop setup steps">
         <article>
           <span>1</span>
-          <strong>Download setup</strong>
-          <p>Download the Windows installer with the FX Edge icon.</p>
+          <strong>Download</strong>
+          <p>Save the FX Edge desktop setup file.</p>
         </article>
         <article>
           <span>2</span>
-          <strong>Run once</strong>
-          <p>Double-click it. If MT5 is custom-installed, browse to `terminal64.exe` in the setup wizard.</p>
+          <strong>Run Setup</strong>
+          <p>Follow the setup wizard. Browse to `terminal64.exe` only if your MT5 is installed in a custom folder.</p>
         </article>
         <article>
           <span>3</span>
-          <strong>Mark installed</strong>
-          <p>Return here, mark installed, then use the MT5 icon normally.</p>
+          <strong>Use MT5 Icon</strong>
+          <p>Return to FX Edge, mark installed, then click the MT5 icon from Market Tools.</p>
         </article>
+      </div>
+
+      <div class="mt5-setup-callout">
+        <strong>Why one installer?</strong>
+        <p>Browsers cannot silently open or modify MT5 for security. This setup makes the MT5 icon friendly, while MT5 still keeps EA, AutoTrading, and WebRequest permissions under your control.</p>
       </div>
 
       <div class="mt5-setup-command">
         <label>
-          <span>Installer file</span>
+          <span>Installer file path</span>
           <textarea id="mt5DesktopSetupCommand" rows="3" readonly></textarea>
         </label>
       </div>
@@ -1727,6 +1779,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=126"></script>
+  <script src="app.js?v=127"></script>
 </body>
 </html>

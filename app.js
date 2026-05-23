@@ -25,6 +25,8 @@ const mt5OrderTable = "mt5_detected_orders";
 const mt5HistoryRequestTable = "mt5_history_requests";
 const dailyEvidenceBucket = "daily-review-evidence";
 const dailyEvidenceSignedUrlTtlSeconds = 3600;
+const supabaseFreeStorageBytes = 1024 * 1024 * 1024;
+const dailyEvidenceCleanupMonths = 6;
 let equityPeriod = "day";
 let periodPlPeriod = "day";
 let equityChartMetric = "r";
@@ -480,6 +482,7 @@ let mt5InboxState = { kind: "idle", message: "" };
 let mt5RealtimeHiddenKeys = new Set();
 let pendingMt5OrderId = "";
 let latestMt5BridgeSetup = "";
+let latestMt5BridgeFields = [];
 let mt5HistoryReviewRange = { active: false, start: "", end: "" };
 let mt5LastFetchAt = "";
 let mt5LastOrderAt = "";
@@ -1085,6 +1088,7 @@ function syncProfileManagementUi() {
   if (dailyReviewCount) dailyReviewCount.textContent = snapshot.dailyReviews;
   const pairCount = $("#profilePairCountValue");
   if (pairCount) pairCount.textContent = snapshot.customPairs;
+  renderStorageHealth();
 
   const saveButton = $("#profileNameForm button[type='submit']");
   if (saveButton) saveButton.disabled = !activeAccount;
@@ -1572,6 +1576,78 @@ function mt5BridgeSetupText(token, source = "desktop") {
   ].join("\n");
 }
 
+function mt5BridgeSetupFields(token, source = "desktop") {
+  const webhook = mt5WebhookUrl();
+  if (source === "mobile") {
+    return [
+      { label: "WebhookURL", value: webhook, helper: "Paste this into the mobile HTTP request URL." },
+      { label: "Bridge Token", value: token, helper: "Private token for this signed-in account." },
+      { label: "Authorization", value: `Bearer ${token}`, helper: "Use as the Authorization header value." },
+      { label: "Content-Type", value: "application/json", helper: "Use this as the request content type." },
+      { label: "JSON Payload", value: mt5MobilePayloadTemplate(), helper: "Template for mobile relay testing." }
+    ];
+  }
+  return [
+    { label: "WebhookURL", value: webhook, helper: "EA input: WebhookUrl" },
+    { label: "Bridge Token", value: token, helper: "EA input: BridgeToken" },
+    { label: "Allow WebRequest URL", value: supabaseConfig.url, helper: "MT5 Tools > Options > Expert Advisors." },
+    { label: "EA Mode", value: "Send closed positions to Detected Closed Positions inbox", helper: "Keep AutoTrading enabled while MT5 is open." }
+  ];
+}
+
+function setLatestMt5BridgeSetup(text = "", fields = []) {
+  latestMt5BridgeSetup = text;
+  latestMt5BridgeFields = Array.isArray(fields) ? fields : [];
+  const output = $("#mt5BridgeOutput");
+  if (output) output.value = latestMt5BridgeSetup;
+  renderMt5BridgeCopyGrid();
+}
+
+function renderMt5BridgeCopyGrid() {
+  const grid = $("#mt5BridgeCopyGrid");
+  if (!grid) return;
+  if (!latestMt5BridgeFields.length) {
+    grid.classList.add("hidden");
+    grid.innerHTML = "";
+    return;
+  }
+  grid.classList.remove("hidden");
+  grid.innerHTML = latestMt5BridgeFields.map((field, index) => `
+    <article class="mt5-copy-card">
+      <div>
+        <span>${escapeHtml(field.label)}</span>
+        <code>${escapeHtml(field.value)}</code>
+        <small>${escapeHtml(field.helper || "")}</small>
+      </div>
+      <button class="mini-button text-mini" type="button" data-copy-index="${index}">Copy</button>
+    </article>
+  `).join("");
+}
+
+function copyTextValue(text, successMessage, fallbackMessage = "Copy blocked. Select the text manually.") {
+  if (!text) {
+    showToast("Nothing to copy yet.");
+    return;
+  }
+  navigator.clipboard?.writeText(text)
+    .then(() => showToast(successMessage))
+    .catch(() => {
+      const output = $("#mt5BridgeOutput");
+      if (output) {
+        output.value = text;
+        output.focus();
+        output.select();
+      }
+      showToast(fallbackMessage);
+    });
+}
+
+function copyMt5BridgeField(index) {
+  const field = latestMt5BridgeFields[Number(index)];
+  if (!field) return;
+  copyTextValue(field.value, `${field.label} copied.`, "Copy blocked. The selected MT5 value is ready.");
+}
+
 function withCloudTimeout(task, message = "Cloud request timed out. Check Supabase connection and try again.", timeoutMs = 45000) {
   let timerId;
   const timeout = new Promise((_, reject) => {
@@ -1832,6 +1908,7 @@ function syncCloudUi() {
 
   const output = $("#mt5BridgeOutput");
   if (output && latestMt5BridgeSetup) output.value = latestMt5BridgeSetup;
+  renderMt5BridgeCopyGrid();
 
   renderMt5BridgeStatus();
   renderMt5Inbox();
@@ -2167,14 +2244,17 @@ async function createMt5HistoryRequest() {
     return;
   }
 
-  latestMt5BridgeSetup = [
+  const setupText = [
     `HistoryRequest=${startDate} to ${endDate}`,
     "Status=Pending until MT5 PC or Oracle relay is online",
     "Required EA input: PollHistoryRequests=true",
     "Open MT5 desktop bridge, or keep the Oracle relay running."
   ].join("\n");
-  const output = $("#mt5BridgeOutput");
-  if (output) output.value = latestMt5BridgeSetup;
+  setLatestMt5BridgeSetup(setupText, [
+    { label: "History Request", value: `${startDate} to ${endDate}`, helper: "The order period the bridge should scan." },
+    { label: "EA Input", value: "PollHistoryRequests=true", helper: "Enable this input on the MT5 bridge EA." },
+    { label: "Status", value: "Pending until MT5 PC or relay is online", helper: "Refresh after MT5 uploads the history." }
+  ]);
   await fetchMt5DetectedOrders({ historyReview: true });
   showToast("History display activated. MT5 bridge will upload missing orders when online.");
 }
@@ -2200,10 +2280,9 @@ async function generateMt5BridgeToken(source = "desktop") {
     return;
   }
 
-  latestMt5BridgeSetup = mt5BridgeSetupText(token, source);
+  setLatestMt5BridgeSetup(mt5BridgeSetupText(token, source), mt5BridgeSetupFields(token, source));
   const output = $("#mt5BridgeOutput");
   if (output) {
-    output.value = latestMt5BridgeSetup;
     output.focus();
     output.select();
   }
@@ -2219,9 +2298,7 @@ function copyMt5BridgeSetup() {
   }
   output.focus();
   output.select();
-  navigator.clipboard?.writeText(output.value)
-    .then(() => showToast("MT5 setup copied."))
-    .catch(() => showToast("Selected setup text is ready to copy."));
+  copyTextValue(output.value, "MT5 setup copied.", "Selected setup text is ready to copy.");
 }
 
 function subscribeMt5Orders() {
@@ -4227,6 +4304,7 @@ function saveDailyEvidenceStore(store) {
   try {
     localStorage.setItem(accountScopedKey(storageKeys.dailyReviewEvidence), JSON.stringify(normalizeDailyEvidenceStore(store)));
     queueCloudSave("evidence");
+    if (isProfileManagementOpen()) renderStorageHealth();
     return true;
   } catch (error) {
     showToast("Screenshot storage is full. Remove an old screenshot or use a smaller image.");
@@ -4282,6 +4360,95 @@ function compactBytes(value) {
   if (bytes >= 1048576) return `${numberFormatter.format(bytes / 1048576)} MB`;
   if (bytes >= 1024) return `${numberFormatter.format(bytes / 1024)} KB`;
   return `${numberFormatter.format(bytes)} B`;
+}
+
+function dailyEvidenceDateValue(dateKey, item = {}) {
+  const raw = item.createdAt || `${dateKey || localDateKey()}T00:00:00`;
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  return new Date(`${dateKey || localDateKey()}T00:00:00`);
+}
+
+function dailyEvidenceCleanupCutoff() {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - dailyEvidenceCleanupMonths);
+  cutoff.setHours(0, 0, 0, 0);
+  return cutoff;
+}
+
+function dailyEvidenceStorageStats() {
+  const store = normalizeDailyEvidenceStore(dailyEvidenceStore());
+  const cutoff = dailyEvidenceCleanupCutoff();
+  let count = 0;
+  let cloudCount = 0;
+  let localCount = 0;
+  let oldCount = 0;
+  let oldCloudCount = 0;
+  let totalBytes = 0;
+  let oldestDate = "";
+
+  Object.entries(store).forEach(([dateKey, items]) => {
+    items.forEach((item) => {
+      const evidence = normalizeDailyEvidenceItem(item);
+      count += 1;
+      if (evidence.storagePath) cloudCount += 1;
+      if (evidence.dataUrl) localCount += 1;
+      totalBytes += Math.max(toNumber(evidence.size || dataUrlByteSize(evidence.dataUrl || ""), 0), 0);
+      const created = dailyEvidenceDateValue(dateKey, evidence);
+      const createdKey = created.toISOString().slice(0, 10);
+      if (!oldestDate || createdKey < oldestDate) oldestDate = createdKey;
+      if (created < cutoff) {
+        oldCount += 1;
+        if (evidence.storagePath) oldCloudCount += 1;
+      }
+    });
+  });
+
+  const percent = totalBytes / supabaseFreeStorageBytes * 100;
+  const tone = percent >= 95 ? "danger" : percent >= 85 ? "warning" : percent >= 70 ? "watch" : "ready";
+  const label = percent >= 95 ? "Urgent" : percent >= 85 ? "Archive soon" : percent >= 70 ? "Watch" : "Healthy";
+  return { count, cloudCount, localCount, oldCount, oldCloudCount, totalBytes, percent, tone, label, oldestDate };
+}
+
+function renderStorageHealth() {
+  const root = $("#storageHealthPanel");
+  if (!root) return;
+  const stats = dailyEvidenceStorageStats();
+  const percentText = `${Math.min(stats.percent, 999).toFixed(stats.percent >= 10 ? 1 : 2)}%`;
+  const badge = $("#storageHealthBadge");
+  if (badge) {
+    badge.textContent = stats.label;
+    badge.className = `sync-badge storage-health-badge ${stats.tone}`;
+  }
+  const fill = $("#storageHealthFill");
+  if (fill) {
+    fill.style.width = `${Math.min(stats.percent, 100)}%`;
+    fill.className = `storage-health-fill ${stats.tone}`;
+  }
+  const used = $("#storageUsedValue");
+  if (used) used.textContent = `${compactBytes(stats.totalBytes)} / 1 GB`;
+  const percent = $("#storagePercentValue");
+  if (percent) percent.textContent = percentText;
+  const count = $("#storageEvidenceCountValue");
+  if (count) count.textContent = `${stats.count} screenshot${stats.count === 1 ? "" : "s"}`;
+  const cloud = $("#storageCloudCountValue");
+  if (cloud) cloud.textContent = `${stats.cloudCount} cloud · ${stats.localCount} local`;
+  const old = $("#storageOldCountValue");
+  if (old) old.textContent = `${stats.oldCount} older than ${dailyEvidenceCleanupMonths} months`;
+  const help = $("#storageHealthHelp");
+  if (help) {
+    help.textContent = stats.percent >= 95
+      ? "Storage is close to full. Export a Full Backup, then clean old screenshots."
+      : stats.percent >= 85
+        ? "Export a Full Backup soon. Old screenshots can be cleaned after backup."
+        : stats.percent >= 70
+          ? "Storage is still usable, but start archiving screenshots regularly."
+          : "Screenshot storage looks healthy. Full Backup keeps a portable archive.";
+  }
+  const cleanup = $("#profileCleanOldEvidenceBtn");
+  if (cleanup) cleanup.disabled = !activeAccount || !stats.oldCount;
+  const backup = $("#profileStorageFullBackupBtn");
+  if (backup) backup.disabled = !activeAccount;
 }
 
 function evidenceExtension(type = "image/webp", name = "") {
@@ -4590,6 +4757,56 @@ function closeEvidencePreview() {
   if (image) image.removeAttribute("src");
   modal?.classList.add("hidden");
   document.body.classList.remove("modal-open");
+}
+
+async function cleanupOldDailyEvidence() {
+  const stats = dailyEvidenceStorageStats();
+  if (!stats.oldCount) {
+    showToast("No old screenshots to clean.");
+    return;
+  }
+  if (stats.oldCloudCount && !canUseEvidenceStorage()) {
+    showToast("Sign in to cloud before cleaning cloud screenshots.");
+    return;
+  }
+  const confirmed = window.confirm(`Export a Full Backup first if you need these images later.\n\nDelete ${stats.oldCount} screenshot${stats.oldCount === 1 ? "" : "s"} older than ${dailyEvidenceCleanupMonths} months? Trade records and daily review text will stay.`);
+  if (!confirmed) return;
+
+  const cutoff = dailyEvidenceCleanupCutoff();
+  const store = normalizeDailyEvidenceStore(dailyEvidenceStore());
+  const nextStore = {};
+  let removed = 0;
+  let cloudErrors = 0;
+
+  for (const [dateKey, items] of Object.entries(store)) {
+    const keep = [];
+    for (const item of items) {
+      const created = dailyEvidenceDateValue(dateKey, item);
+      if (created < cutoff) {
+        if (item.storagePath) {
+          try {
+            await deleteDailyEvidenceStorageItem(item);
+          } catch (error) {
+            cloudErrors += 1;
+            keep.push(item);
+            continue;
+          }
+        }
+        removed += 1;
+      } else {
+        keep.push(item);
+      }
+    }
+    if (keep.length) nextStore[dateKey] = keep;
+  }
+
+  if (saveDailyEvidenceStore(nextStore)) {
+    renderDailyEvidencePreview(currentDailyReviewDate());
+    syncProfileManagementUi();
+    showToast(cloudErrors
+      ? `Cleaned ${removed} screenshots. ${cloudErrors} cloud file${cloudErrors === 1 ? "" : "s"} need retry.`
+      : `Cleaned ${removed} old screenshot${removed === 1 ? "" : "s"}.`);
+  }
 }
 
 function inferScoreChecksFromTrade(trade = {}) {
@@ -8571,6 +8788,12 @@ function bindEvents() {
   const profileExportFullBackupButton = $("#profileExportFullBackupBtn");
   if (profileExportFullBackupButton) profileExportFullBackupButton.addEventListener("click", exportFullBackup);
 
+  const profileStorageFullBackupButton = $("#profileStorageFullBackupBtn");
+  if (profileStorageFullBackupButton) profileStorageFullBackupButton.addEventListener("click", exportFullBackup);
+
+  const profileCleanOldEvidenceButton = $("#profileCleanOldEvidenceBtn");
+  if (profileCleanOldEvidenceButton) profileCleanOldEvidenceButton.addEventListener("click", cleanupOldDailyEvidence);
+
   const profileImportJsonButton = $("#profileImportJsonBtn");
   if (profileImportJsonButton) {
     profileImportJsonButton.addEventListener("click", () => {
@@ -8753,6 +8976,15 @@ function bindEvents() {
 
   const copyMt5BridgeButton = $("#copyMt5BridgeBtn");
   if (copyMt5BridgeButton) copyMt5BridgeButton.addEventListener("click", copyMt5BridgeSetup);
+
+  const mt5BridgeCopyGrid = $("#mt5BridgeCopyGrid");
+  if (mt5BridgeCopyGrid) {
+    mt5BridgeCopyGrid.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-copy-index]");
+      if (!button) return;
+      copyMt5BridgeField(button.dataset.copyIndex);
+    });
+  }
 
   const refreshMt5OrdersButton = $("#refreshMt5OrdersBtn");
   if (refreshMt5OrdersButton) {

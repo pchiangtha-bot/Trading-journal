@@ -1,9 +1,9 @@
-const CACHE_NAME = "fx-edge-journal-v126";
+const CACHE_NAME = "fx-edge-journal-v127";
 const APP_FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=126",
-  "./app.js?v=126",
+  "./styles.css?v=127",
+  "./app.js?v=127",
   "./windows/installer-output/FxEdgeMt5DesktopSetup.exe",
   "./windows/install-fxedge-mt5-protocol.bat",
   "./windows/register-fxedge-mt5-protocol.ps1",

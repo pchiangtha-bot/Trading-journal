@@ -487,6 +487,59 @@ button {
   color: var(--red);
 }
 
+.mt5-bridge-copy-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.mt5-bridge-copy-grid.hidden {
+  display: none;
+}
+
+.mt5-copy-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+}
+
+.mt5-copy-card span,
+.mt5-copy-card small,
+.mt5-copy-card code {
+  display: block;
+  min-width: 0;
+}
+
+.mt5-copy-card span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.mt5-copy-card code {
+  margin-top: 3px;
+  color: var(--ink);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mt5-copy-card small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
 .mt5-bridge-help {
   margin: 0;
   padding: 9px 10px;
@@ -3892,6 +3945,64 @@ td {
   background: color-mix(in srgb, var(--teal-soft) 34%, var(--surface));
 }
 
+.profile-storage-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface));
+}
+
+.storage-health-badge.ready {
+  color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.storage-health-badge.watch,
+.storage-health-badge.warning {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.storage-health-badge.danger {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.storage-health-meter {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+
+.storage-health-fill {
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+  transition: width 180ms ease;
+  background: var(--teal);
+}
+
+.storage-health-fill.watch,
+.storage-health-fill.warning {
+  background: var(--amber);
+}
+
+.storage-health-fill.danger {
+  background: var(--red);
+}
+
+.storage-health-grid .storage-wide-stat {
+  grid-column: 1 / -1;
+}
+
+.storage-health-actions .danger-button {
+  width: 100%;
+  justify-content: center;
+}
+
 .profile-detail-grid span,
 .profile-snapshot-grid span {
   display: block;
@@ -4124,6 +4235,27 @@ td {
   margin: 5px 0 0;
   color: var(--muted);
   font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.mt5-setup-callout {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--amber-soft) 42%, var(--surface));
+}
+
+.mt5-setup-callout strong {
+  color: var(--ink);
+}
+
+.mt5-setup-callout p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
   line-height: 1.4;
 }
 
