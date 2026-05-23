@@ -422,8 +422,8 @@ button {
 
 .bridge-action-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .bridge-action-row .mini-button {
@@ -440,6 +440,18 @@ button {
   border-color: color-mix(in srgb, var(--teal) 34%, var(--border));
   background: color-mix(in srgb, var(--teal-soft) 72%, var(--surface));
   color: var(--ink);
+  line-height: 1.15;
+  text-align: center;
+}
+
+.mini-button.text-mini.desktop-setup-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 10px;
+  font-size: 0.72rem;
 }
 
 .desktop-setup-button .icon {
@@ -4054,6 +4066,37 @@ td {
   justify-content: center;
 }
 
+.backup-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.backup-guide-grid article {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+}
+
+.backup-guide-grid strong,
+.backup-guide-grid span {
+  display: block;
+}
+
+.backup-guide-grid strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+}
+
+.backup-guide-grid span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
 .profile-helper-text {
   margin: -2px 0 0;
   color: var(--muted);
@@ -4538,6 +4581,7 @@ td {
   .profile-name-form,
   .profile-detail-grid,
   .profile-action-grid,
+  .backup-guide-grid,
   .profile-snapshot-grid,
   .rule-checklist.two-column,
   .rule-dashboard,

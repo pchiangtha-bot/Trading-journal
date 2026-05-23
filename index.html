@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=129">
+  <link rel="stylesheet" href="styles.css?v=133">
 </head>
 <body>
   <div class="app-shell">
@@ -148,7 +148,7 @@
             <button class="mini-button text-mini" type="button" id="generateMt5TokenBtn">PC</button>
             <button class="mini-button text-mini desktop-setup-button" type="button" id="openMt5DesktopSetupBtn">
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H4zM8 19h8M10 15v4M14 15v4"/></svg>
-              MT5 Desktop Setup
+              MT5 Setup
             </button>
           </div>
           <p class="mt5-desktop-setup-hint">Install once to open MT5 directly from this app on Windows.</p>
@@ -1562,20 +1562,34 @@
           </button>
           <button class="tool-button" type="button" id="profileExportJsonBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-            Quick Backup
+            Quick JSON
           </button>
           <button class="tool-button" type="button" id="profileExportFullBackupBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/><path d="M4 21h16"/></svg>
-            Full Backup
+            Full ZIP
           </button>
           <button class="tool-button" type="button" id="profileImportJsonBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg>
-            Restore Backup
+            Restore JSON/ZIP
           </button>
           <button class="tool-button" type="button" id="profileExportCsvBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10l6 6v10H4zM14 4v6h6M8 15h8M8 18h5"/></svg>
-            Export Filtered CSV
+            Trade CSV
           </button>
+        </div>
+        <div class="backup-guide-grid" aria-label="Backup options">
+          <article>
+            <strong>Quick JSON</strong>
+            <span>Trades, strategies, settings, and screenshot references. Small file.</span>
+          </article>
+          <article>
+            <strong>Full ZIP</strong>
+            <span>Portable archive with JSON plus screenshot image files when available.</span>
+          </article>
+          <article>
+            <strong>Trade CSV</strong>
+            <span>Only the currently filtered Trade History view for spreadsheet review.</span>
+          </article>
         </div>
         <p class="profile-helper-text" id="profileCloudHelp">Use Cloud Profile loads the synced journal for your signed-in account.</p>
         <p class="profile-transfer-warning">Transfer replaces the cloud journal for the signed-in Google/email account. Export a backup first if you are unsure.</p>
@@ -1773,6 +1787,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=129"></script>
+  <script src="app.js?v=133"></script>
 </body>
 </html>

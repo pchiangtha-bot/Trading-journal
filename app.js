@@ -8438,7 +8438,7 @@ function profileBackupPayload(evidence = dailyEvidenceStore(), backupType = "qui
 function exportJsonBackup() {
   const content = JSON.stringify(profileBackupPayload(dailyEvidenceStore(), "quick"), null, 2);
   downloadFile("fx-edge-journal.json", content, "application/json");
-  showToast("Quick backup JSON exported.");
+  showToast("Quick JSON exported. Use Full ZIP when you need screenshot image files too.");
 }
 
 function backupEvidenceFileName(date, item) {
@@ -8449,10 +8449,13 @@ function backupEvidenceFileName(date, item) {
 async function fullBackupEvidenceStore() {
   const source = normalizeDailyEvidenceStore(dailyEvidenceStore());
   const evidenceFiles = [];
+  const missingEvidence = [];
   const portableStore = {};
+  let evidenceTotal = 0;
   for (const [date, items] of Object.entries(source)) {
     portableStore[date] = [];
     for (const item of items) {
+      evidenceTotal += 1;
       const normalized = normalizeDailyEvidenceItem(item);
       const portable = { ...normalized };
       const filename = backupEvidenceFileName(date, normalized);
@@ -8464,35 +8467,56 @@ async function fullBackupEvidenceStore() {
           portable.type = downloaded.type || portable.type;
           portable.dataUrl = "";
         }
+        if (!downloaded?.bytes?.length) {
+          missingEvidence.push({ date, id: normalized.id, name: normalized.name, storagePath: normalized.storagePath });
+        }
       } catch (error) {
         if (portable.dataUrl?.startsWith("data:image/")) {
           const blob = dataUrlToBlob(portable.dataUrl, portable.type);
           evidenceFiles.push({ path: filename, data: await blobToBytes(blob) });
           portable.backupFile = filename;
           portable.dataUrl = "";
+        } else {
+          missingEvidence.push({ date, id: normalized.id, name: normalized.name, storagePath: normalized.storagePath });
         }
       }
       portableStore[date].push(portable);
     }
   }
-  return { portableStore: normalizeDailyEvidenceStore(portableStore), evidenceFiles };
+  return { portableStore: normalizeDailyEvidenceStore(portableStore), evidenceFiles, evidenceTotal, missingEvidence };
 }
 
 async function exportFullBackup() {
   try {
-    showToast("Preparing full backup...");
-    const { portableStore, evidenceFiles } = await fullBackupEvidenceStore();
+    showToast("Preparing Full ZIP backup. Cloud screenshots may take a moment...");
+    const { portableStore, evidenceFiles, evidenceTotal, missingEvidence } = await fullBackupEvidenceStore();
     const payload = profileBackupPayload(portableStore, "full");
     const files = [
       { path: "fx-edge-journal.json", data: utf8Bytes(JSON.stringify(payload, null, 2)) },
-      { path: "manifest.json", data: utf8Bytes(JSON.stringify({ app: "FX Edge Journal", backupVersion: 2, exportedAt: payload.exportedAt, evidenceFiles: evidenceFiles.map((file) => file.path) }, null, 2)) },
+      { path: "manifest.json", data: utf8Bytes(JSON.stringify({
+        app: "FX Edge Journal",
+        backupVersion: 2,
+        backupType: "full",
+        exportedAt: payload.exportedAt,
+        evidenceTotal,
+        evidencePackaged: evidenceFiles.length,
+        evidenceMissing: missingEvidence.length,
+        evidenceFiles: evidenceFiles.map((file) => file.path),
+        missingEvidence
+      }, null, 2)) },
       ...evidenceFiles
     ];
     const stamp = localDateKey().replace(/-/g, "");
     downloadBlob(`fx-edge-journal-full-${stamp}.zip`, createStoredZip(files));
-    showToast(`Full backup exported with ${evidenceFiles.length} screenshot ${evidenceFiles.length === 1 ? "file" : "files"}.`);
+    if (!evidenceTotal) {
+      showToast("Full ZIP exported. No screenshot evidence was found.");
+    } else if (missingEvidence.length) {
+      showToast(`Full ZIP exported with ${evidenceFiles.length}/${evidenceTotal} screenshots. ${missingEvidence.length} could not be downloaded.`);
+    } else {
+      showToast(`Full ZIP exported with all ${evidenceFiles.length} screenshot ${evidenceFiles.length === 1 ? "file" : "files"}.`);
+    }
   } catch (error) {
-    showToast("Full backup failed. Try Quick Backup first.");
+    showToast("Full ZIP failed. Export Quick JSON first, then retry when cloud Storage is reachable.");
   }
 }
 
@@ -8511,7 +8535,7 @@ function exportFilteredCsv() {
   const end = $("#historyEndFilter")?.value || "all";
   const filename = `fx-trades-view-${start}-to-${end}.csv`.replace(/[^a-z0-9._-]+/gi, "-");
   downloadFile(filename, tradeCsvContent(list), "text/csv");
-  showToast(`Exported ${list.length} filtered ${list.length === 1 ? "trade" : "trades"}.`);
+  showToast(`Trade CSV exported with ${list.length} visible ${list.length === 1 ? "trade" : "trades"}.`);
 }
 
 async function applyImportedBackup(parsed, message = "Import complete.") {
