@@ -8018,7 +8018,7 @@ function mt5AppLaunchTarget() {
 }
 
 function mt5DesktopSetupCommand() {
-  return 'windows\\install-fxedge-mt5-protocol.bat';
+  return 'windows\\installer-output\\FxEdgeMt5DesktopSetup.exe';
 }
 
 function isMt5DesktopProtocolInstalled() {
@@ -8057,11 +8057,11 @@ function markMt5DesktopSetupInstalled() {
 function copyMt5DesktopSetupCommand() {
   const command = mt5DesktopSetupCommand();
   navigator.clipboard?.writeText(command)
-    .then(() => showToast("MT5 desktop setup command copied."))
+    .then(() => showToast("MT5 desktop installer path copied."))
     .catch(() => {
       const field = $("#mt5DesktopSetupCommand");
       field?.select();
-      showToast("Copy blocked. Select and copy the command manually.");
+      showToast("Copy blocked. Select and copy the installer path manually.");
     });
 }
 

@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=124">
+  <link rel="stylesheet" href="styles.css?v=125">
 </head>
 <body>
   <div class="app-shell">
@@ -1598,7 +1598,7 @@
         <div>
           <p class="eyebrow">One-time desktop installer</p>
           <h3>Connect this browser button to your local MT5 program.</h3>
-          <p>Windows blocks websites from opening `.exe` files directly. This one-file setup registers a safe local link named <strong>fxedge-mt5://open</strong>, then the Market Tools MT5 icon can open your installed `terminal64.exe`.</p>
+          <p>Windows blocks websites from opening `.exe` files directly. This installer registers a safe local link named <strong>fxedge-mt5://open</strong>, then the Market Tools MT5 icon can open your installed `terminal64.exe`.</p>
         </div>
       </div>
 
@@ -1606,12 +1606,12 @@
         <article>
           <span>1</span>
           <strong>Download setup</strong>
-          <p>Download the one-file Windows setup launcher.</p>
+          <p>Download the Windows installer with the FX Edge icon.</p>
         </article>
         <article>
           <span>2</span>
           <strong>Run once</strong>
-          <p>Double-click it. If MT5 is custom-installed, drag `terminal64.exe` onto the setup file.</p>
+          <p>Double-click it. If MT5 is custom-installed, browse to `terminal64.exe` in the setup wizard.</p>
         </article>
         <article>
           <span>3</span>
@@ -1622,25 +1622,25 @@
 
       <div class="mt5-setup-command">
         <label>
-          <span>Local command</span>
+          <span>Installer file</span>
           <textarea id="mt5DesktopSetupCommand" rows="3" readonly></textarea>
         </label>
       </div>
 
       <div class="profile-action-grid mt5-setup-actions">
-        <a class="tool-button" id="downloadMt5DesktopSetupBtn" href="windows/install-fxedge-mt5-protocol.bat" download>
+        <a class="tool-button" id="downloadMt5DesktopSetupBtn" href="windows/installer-output/FxEdgeMt5DesktopSetup.exe" download>
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-          Download Windows Setup
+          Download Installer
         </a>
         <button class="tool-button" type="button" id="copyMt5DesktopSetupCommandBtn">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z"/><path d="M6 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
-          Copy Command
+          Copy Path
         </button>
         <button class="primary-button" type="button" id="mt5DesktopSetupInstalledBtn">
           I Already Installed
         </button>
       </div>
-      <p class="profile-helper-text">If MT5 is installed in a custom folder, drag `terminal64.exe` onto the downloaded setup file, or run the setup file with the exact path as its first argument.</p>
+      <p class="profile-helper-text">Manual fallback: use `windows/install-fxedge-mt5-protocol.bat` if Windows blocks the installer.</p>
     </section>
   </div>
 
@@ -1723,6 +1723,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=124"></script>
+  <script src="app.js?v=125"></script>
 </body>
 </html>
