@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=127">
+  <link rel="stylesheet" href="styles.css?v=128">
 </head>
 <body>
   <div class="app-shell">
@@ -146,7 +146,6 @@
           </div>
           <div class="bridge-action-row">
             <button class="mini-button text-mini" type="button" id="generateMt5TokenBtn">PC</button>
-            <button class="mini-button text-mini" type="button" id="generateMt5MobileTokenBtn">Mobile</button>
             <button class="mini-button text-mini" type="button" id="openMt5DesktopSetupBtn">Desktop setup</button>
           </div>
           <div class="mt5-bridge-status" id="mt5BridgeStatus" aria-live="polite"></div>
@@ -162,17 +161,8 @@
             </label>
             <button class="mini-button text-mini history-display-button" type="button" id="generateMt5HistoryTokenBtn">Display History</button>
           </div>
-          <div class="mobile-engine-strip" aria-label="MT5 mobile engines">
-            <span>iOS</span>
-            <span>Android</span>
-            <span>Realtime</span>
-          </div>
           <div class="mt5-bridge-copy-grid hidden" id="mt5BridgeCopyGrid" aria-live="polite"></div>
-          <textarea id="mt5BridgeOutput" rows="8" readonly placeholder="Generate a PC or Mobile token after cloud sign in."></textarea>
-          <button class="tool-button" type="button" id="copyMt5BridgeBtn">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h10v12H8z"/><path d="M6 16H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
-            Copy Setup
-          </button>
+          <p class="mt5-bridge-help">MT5 mobile cannot run Expert Advisors. Use PC, VPS, or desktop relay for automation.</p>
         </div>
         <p class="cloud-note" id="cloudNote">Use email/password to sync this journal between iPhone and PC.</p>
         </section>
@@ -1779,6 +1769,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=127"></script>
+  <script src="app.js?v=128"></script>
 </body>
 </html>

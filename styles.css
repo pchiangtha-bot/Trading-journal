@@ -598,31 +598,6 @@ button {
   opacity: 0.58;
 }
 
-.mobile-engine-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.mobile-engine-strip span {
-  min-width: 0;
-  padding: 6px 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--teal);
-  background: var(--teal-soft);
-  text-align: center;
-  font-size: 0.7rem;
-  font-weight: 900;
-}
-
-.mt5-bridge-panel textarea {
-  min-height: 170px;
-  resize: vertical;
-  font-size: 0.72rem;
-  line-height: 1.4;
-}
-
 .text-mini {
   width: auto;
   min-width: 0;

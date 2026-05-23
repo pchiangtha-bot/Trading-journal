@@ -1598,8 +1598,6 @@ function mt5BridgeSetupFields(token, source = "desktop") {
 function setLatestMt5BridgeSetup(text = "", fields = []) {
   latestMt5BridgeSetup = text;
   latestMt5BridgeFields = Array.isArray(fields) ? fields : [];
-  const output = $("#mt5BridgeOutput");
-  if (output) output.value = latestMt5BridgeSetup;
   renderMt5BridgeCopyGrid();
 }
 
@@ -1632,12 +1630,6 @@ function copyTextValue(text, successMessage, fallbackMessage = "Copy blocked. Se
   navigator.clipboard?.writeText(text)
     .then(() => showToast(successMessage))
     .catch(() => {
-      const output = $("#mt5BridgeOutput");
-      if (output) {
-        output.value = text;
-        output.focus();
-        output.select();
-      }
       showToast(fallbackMessage);
     });
 }
@@ -1906,8 +1898,6 @@ function syncCloudUi() {
   const bridgePanel = $("#mt5BridgePanel");
   if (bridgePanel) bridgePanel.classList.toggle("hidden", !signedIn);
 
-  const output = $("#mt5BridgeOutput");
-  if (output && latestMt5BridgeSetup) output.value = latestMt5BridgeSetup;
   renderMt5BridgeCopyGrid();
 
   renderMt5BridgeStatus();
@@ -2281,24 +2271,8 @@ async function generateMt5BridgeToken(source = "desktop") {
   }
 
   setLatestMt5BridgeSetup(mt5BridgeSetupText(token, source), mt5BridgeSetupFields(token, source));
-  const output = $("#mt5BridgeOutput");
-  if (output) {
-    output.focus();
-    output.select();
-  }
   fetchMt5BridgeTokens({ silent: true }).catch(() => {});
   showToast(isMobile ? "MT5 mobile relay token created. Save it now; it is shown once." : "MT5 bridge token created. Save it now; it is shown once.");
-}
-
-function copyMt5BridgeSetup() {
-  const output = $("#mt5BridgeOutput");
-  if (!output || !output.value.trim()) {
-    showToast("Generate an MT5 token first.");
-    return;
-  }
-  output.focus();
-  output.select();
-  copyTextValue(output.value, "MT5 setup copied.", "Selected setup text is ready to copy.");
 }
 
 function subscribeMt5Orders() {
@@ -8968,14 +8942,8 @@ function bindEvents() {
   const generateMt5TokenButton = $("#generateMt5TokenBtn");
   if (generateMt5TokenButton) generateMt5TokenButton.addEventListener("click", () => generateMt5BridgeToken("desktop"));
 
-  const generateMt5MobileTokenButton = $("#generateMt5MobileTokenBtn");
-  if (generateMt5MobileTokenButton) generateMt5MobileTokenButton.addEventListener("click", () => generateMt5BridgeToken("mobile"));
-
   const generateMt5HistoryButton = $("#generateMt5HistoryTokenBtn");
   if (generateMt5HistoryButton) generateMt5HistoryButton.addEventListener("click", createMt5HistoryRequest);
-
-  const copyMt5BridgeButton = $("#copyMt5BridgeBtn");
-  if (copyMt5BridgeButton) copyMt5BridgeButton.addEventListener("click", copyMt5BridgeSetup);
 
   const mt5BridgeCopyGrid = $("#mt5BridgeCopyGrid");
   if (mt5BridgeCopyGrid) {
