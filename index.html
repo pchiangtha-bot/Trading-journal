@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=125">
+  <link rel="stylesheet" href="styles.css?v=126">
 </head>
 <body>
   <div class="app-shell">
@@ -237,7 +237,7 @@
               <option value="dark">Dark</option>
             </select>
           </label>
-          <input type="file" id="importFile" accept="application/json" hidden>
+          <input type="file" id="importFile" accept=".json,application/json,.zip,application/zip,application/x-zip-compressed" hidden>
         </div>
       </header>
 
@@ -1521,11 +1521,15 @@
           </button>
           <button class="tool-button" type="button" id="profileExportJsonBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
-            Export Backup
+            Quick Backup
+          </button>
+          <button class="tool-button" type="button" id="profileExportFullBackupBtn">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/><path d="M4 21h16"/></svg>
+            Full Backup
           </button>
           <button class="tool-button" type="button" id="profileImportJsonBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg>
-            Import Backup
+            Restore Backup
           </button>
           <button class="tool-button" type="button" id="profileExportCsvBtn">
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h10l6 6v10H4zM14 4v6h6M8 15h8M8 18h5"/></svg>
@@ -1723,6 +1727,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=125"></script>
+  <script src="app.js?v=126"></script>
 </body>
 </html>

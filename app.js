@@ -23,6 +23,8 @@ const cloudProfileTable = "journal_profiles";
 const mt5TokenTable = "mt5_bridge_tokens";
 const mt5OrderTable = "mt5_detected_orders";
 const mt5HistoryRequestTable = "mt5_history_requests";
+const dailyEvidenceBucket = "daily-review-evidence";
+const dailyEvidenceSignedUrlTtlSeconds = 3600;
 let equityPeriod = "day";
 let periodPlPeriod = "day";
 let equityChartMetric = "r";
@@ -481,6 +483,7 @@ let latestMt5BridgeSetup = "";
 let mt5HistoryReviewRange = { active: false, start: "", end: "" };
 let mt5LastFetchAt = "";
 let mt5LastOrderAt = "";
+const dailyEvidenceUrlCache = new Map();
 let cloudSyncState = {
   label: "Local",
   detail: "Use email/password to sync this journal between iPhone and PC.",
@@ -1113,6 +1116,8 @@ function syncProfileManagementUi() {
   if (migrateButton) migrateButton.disabled = !signedInCloud || !activeAccount || activeCloud || activeCloudAccount;
   const exportJsonButton = $("#profileExportJsonBtn");
   if (exportJsonButton) exportJsonButton.disabled = !activeAccount;
+  const exportFullButton = $("#profileExportFullBackupBtn");
+  if (exportFullButton) exportFullButton.disabled = !activeAccount;
   const importJsonButton = $("#profileImportJsonBtn");
   if (importJsonButton) importJsonButton.disabled = !activeAccount;
   const exportCsvButton = $("#profileExportCsvBtn");
@@ -4189,7 +4194,7 @@ function normalizeDailyEvidenceStore(store = {}) {
     if (!key || !Array.isArray(items)) return next;
     const normalizedItems = items
       .map(normalizeDailyEvidenceItem)
-      .filter((item) => item.dataUrl.startsWith("data:image/"))
+      .filter(hasDailyEvidenceImageSource)
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
       .slice(0, 2);
     if (normalizedItems.length) next[key] = normalizedItems;
@@ -4202,9 +4207,9 @@ function mergeDailyEvidenceStores(...stores) {
   stores.forEach((store) => {
     const normalized = normalizeDailyEvidenceStore(store);
     Object.entries(normalized).forEach(([date, items]) => {
-      const map = new Map((merged[date] || []).map((item) => [item.id || item.dataUrl, item]));
+      const map = new Map((merged[date] || []).map((item) => [dailyEvidenceIdentity(item), item]));
       items.forEach((item) => {
-        const key = item.id || item.dataUrl;
+        const key = dailyEvidenceIdentity(item);
         const existing = map.get(key);
         if (!existing || String(item.createdAt || "").localeCompare(String(existing.createdAt || "")) > 0) {
           map.set(key, item);
@@ -4235,6 +4240,10 @@ function normalizeDailyEvidenceItem(item = {}) {
     name: String(item.name || "Chart screenshot").slice(0, 120),
     type: String(item.type || "image/webp"),
     dataUrl: String(item.dataUrl || ""),
+    storageBucket: String(item.storageBucket || dailyEvidenceBucket),
+    storagePath: String(item.storagePath || ""),
+    backupFile: String(item.backupFile || ""),
+    storageStatus: String(item.storageStatus || ""),
     width: Math.max(toNumber(item.width, 0), 0),
     height: Math.max(toNumber(item.height, 0), 0),
     size: Math.max(toNumber(item.size, 0), 0),
@@ -4243,11 +4252,19 @@ function normalizeDailyEvidenceItem(item = {}) {
   };
 }
 
+function hasDailyEvidenceImageSource(item = {}) {
+  return String(item.dataUrl || "").startsWith("data:image/") || Boolean(item.storagePath || item.backupFile);
+}
+
+function dailyEvidenceIdentity(item = {}) {
+  return item.id || item.storagePath || item.backupFile || item.dataUrl || randomId("evidence");
+}
+
 function dailyEvidenceForDate(date = localDateKey()) {
   const key = String(date || "").slice(0, 10) || localDateKey();
   const items = dailyEvidenceStore()[key];
   return Array.isArray(items)
-    ? items.map(normalizeDailyEvidenceItem).filter((item) => item.dataUrl.startsWith("data:image/")).slice(0, 2)
+    ? items.map(normalizeDailyEvidenceItem).filter(hasDailyEvidenceImageSource).slice(0, 2)
     : [];
 }
 
@@ -4265,6 +4282,137 @@ function compactBytes(value) {
   if (bytes >= 1048576) return `${numberFormatter.format(bytes / 1048576)} MB`;
   if (bytes >= 1024) return `${numberFormatter.format(bytes / 1024)} KB`;
   return `${numberFormatter.format(bytes)} B`;
+}
+
+function evidenceExtension(type = "image/webp", name = "") {
+  const lowerType = String(type || "").toLowerCase();
+  if (lowerType.includes("png")) return "png";
+  if (lowerType.includes("jpeg") || lowerType.includes("jpg")) return "jpg";
+  if (lowerType.includes("gif")) return "gif";
+  if (lowerType.includes("webp")) return "webp";
+  const match = String(name || "").toLowerCase().match(/\.([a-z0-9]{2,5})$/);
+  return match ? match[1].replace(/[^a-z0-9]/g, "") : "webp";
+}
+
+function safeStorageNamePart(value = "") {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "chart";
+}
+
+function dailyEvidenceStoragePath(date, item) {
+  if (!cloudUser?.id) return "";
+  const key = String(date || localDateKey()).slice(0, 10) || localDateKey();
+  const id = safeStorageNamePart(item.id || randomId("evidence"));
+  const ext = evidenceExtension(item.type, item.name);
+  return `${cloudUser.id}/${key}/${id}.${ext}`;
+}
+
+function canUseEvidenceStorage() {
+  return Boolean(supabaseClient && cloudUser && isActiveCloudProfile());
+}
+
+function dataUrlToBlob(dataUrl = "", fallbackType = "image/webp") {
+  const [header, encoded = ""] = String(dataUrl).split(",");
+  const type = header.match(/data:([^;]+)/)?.[1] || fallbackType;
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type });
+}
+
+function bytesToDataUrl(bytes, type = "application/octet-stream") {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(index, index + chunkSize));
+  }
+  return `data:${type};base64,${btoa(binary)}`;
+}
+
+async function blobToBytes(blob) {
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function uploadDailyEvidenceItem(date, item, blob = null) {
+  const normalized = normalizeDailyEvidenceItem(item);
+  if (!canUseEvidenceStorage()) return normalized;
+  const sourceBlob = blob || (normalized.dataUrl ? dataUrlToBlob(normalized.dataUrl, normalized.type) : null);
+  if (!sourceBlob) return normalized;
+  const storagePath = normalized.storagePath || dailyEvidenceStoragePath(date, normalized);
+  if (!storagePath) return normalized;
+
+  const { error } = await supabaseClient.storage
+    .from(normalized.storageBucket || dailyEvidenceBucket)
+    .upload(storagePath, sourceBlob, {
+      cacheControl: "3600",
+      contentType: normalized.type || sourceBlob.type || "image/webp",
+      upsert: true
+    });
+  if (error) throw error;
+
+  dailyEvidenceUrlCache.delete(storagePath);
+  return normalizeDailyEvidenceItem({
+    ...normalized,
+    storageBucket: normalized.storageBucket || dailyEvidenceBucket,
+    storagePath,
+    storageStatus: "cloud",
+    dataUrl: ""
+  });
+}
+
+function cachedDailyEvidenceUrl(item = {}) {
+  if (item.dataUrl?.startsWith("data:image/")) return item.dataUrl;
+  const cached = item.storagePath ? dailyEvidenceUrlCache.get(item.storagePath) : null;
+  if (cached && cached.expiresAt > Date.now() + 60000) return cached.url;
+  if (cached) dailyEvidenceUrlCache.delete(item.storagePath);
+  return "";
+}
+
+async function resolveDailyEvidenceUrl(item = {}) {
+  const normalized = normalizeDailyEvidenceItem(item);
+  if (normalized.dataUrl.startsWith("data:image/")) return normalized.dataUrl;
+  if (!normalized.storagePath || !supabaseClient || !cloudUser) return "";
+  const cached = cachedDailyEvidenceUrl(normalized);
+  if (cached) return cached;
+  const { data, error } = await supabaseClient.storage
+    .from(normalized.storageBucket || dailyEvidenceBucket)
+    .createSignedUrl(normalized.storagePath, dailyEvidenceSignedUrlTtlSeconds);
+  if (error) throw error;
+  const url = data?.signedUrl || "";
+  if (url) {
+    dailyEvidenceUrlCache.set(normalized.storagePath, {
+      url,
+      expiresAt: Date.now() + (dailyEvidenceSignedUrlTtlSeconds * 1000)
+    });
+  }
+  return url;
+}
+
+async function downloadDailyEvidenceBytes(item = {}) {
+  const normalized = normalizeDailyEvidenceItem(item);
+  if (normalized.dataUrl.startsWith("data:image/")) {
+    const blob = dataUrlToBlob(normalized.dataUrl, normalized.type);
+    return { bytes: await blobToBytes(blob), type: normalized.type };
+  }
+  if (!normalized.storagePath || !supabaseClient || !cloudUser) return null;
+  const { data, error } = await supabaseClient.storage
+    .from(normalized.storageBucket || dailyEvidenceBucket)
+    .download(normalized.storagePath);
+  if (error) throw error;
+  return { bytes: await blobToBytes(data), type: data.type || normalized.type };
+}
+
+async function deleteDailyEvidenceStorageItem(item = {}) {
+  const normalized = normalizeDailyEvidenceItem(item);
+  if (!normalized.storagePath || !canUseEvidenceStorage()) return;
+  const { error } = await supabaseClient.storage
+    .from(normalized.storageBucket || dailyEvidenceBucket)
+    .remove([normalized.storagePath]);
+  if (error) throw error;
+  dailyEvidenceUrlCache.delete(normalized.storagePath);
 }
 
 function readImageFile(file) {
@@ -4320,19 +4468,37 @@ function renderDailyEvidencePreview(date = currentDailyReviewDate()) {
     return;
   }
   container.innerHTML = items
-    .map((item) => `
-      <article class="chart-evidence-card">
+    .map((item) => {
+      const imageSrc = cachedDailyEvidenceUrl(item);
+      const sourceLabel = item.storagePath && !item.dataUrl ? "Cloud" : item.storagePath ? "Cloud + local" : "Local";
+      return `
+      <article class="chart-evidence-card" data-evidence-id="${escapeHtml(item.id)}">
         <button class="chart-evidence-open" type="button" data-evidence-action="open" data-id="${escapeHtml(item.id)}">
-          <img src="${escapeHtml(item.dataUrl)}" alt="${escapeHtml(item.name)}">
+          ${imageSrc
+            ? `<img src="${escapeHtml(imageSrc)}" alt="${escapeHtml(item.name)}">`
+            : '<span class="chart-evidence-loading">Loading cloud image...</span>'}
         </button>
         <div class="chart-evidence-meta">
           <strong>${escapeHtml(item.name)}</strong>
-          <span>${escapeHtml(`${item.width}x${item.height} · ${compactBytes(item.size)}`)}</span>
+          <span>${escapeHtml(`${item.width}x${item.height} · ${compactBytes(item.size)} · ${sourceLabel}`)}</span>
         </div>
         <button class="mini-button text-mini danger" type="button" data-evidence-action="remove" data-id="${escapeHtml(item.id)}">Remove</button>
       </article>
-    `)
+    `;
+    })
     .join("");
+  hydrateDailyEvidenceImages(date, items);
+}
+
+async function hydrateDailyEvidenceImages(date, items) {
+  const needsHydration = items.filter((item) => item.storagePath && !cachedDailyEvidenceUrl(item));
+  if (!needsHydration.length) return;
+  let updated = false;
+  await Promise.allSettled(needsHydration.map(async (item) => {
+    const url = await resolveDailyEvidenceUrl(item);
+    if (url) updated = true;
+  }));
+  if (updated && currentDailyReviewDate() === date) renderDailyEvidencePreview(date);
 }
 
 async function addDailyEvidenceFiles(fileList) {
@@ -4351,24 +4517,43 @@ async function addDailyEvidenceFiles(fileList) {
   }
   const selected = files.slice(0, slots);
   try {
-    const compressed = [];
+    const prepared = [];
+    let cloudCount = 0;
     for (const file of selected) {
-      compressed.push(await compressDailyEvidenceImage(file));
+      const compressed = await compressDailyEvidenceImage(file);
+      try {
+        const uploaded = await uploadDailyEvidenceItem(date, compressed);
+        if (uploaded.storagePath && !uploaded.dataUrl) cloudCount += 1;
+        prepared.push(uploaded);
+      } catch (error) {
+        prepared.push(normalizeDailyEvidenceItem({ ...compressed, storageStatus: "local-fallback" }));
+      }
     }
-    store[date] = [...existing, ...compressed].slice(0, 2);
+    store[date] = [...existing, ...prepared].slice(0, 2);
     if (saveDailyEvidenceStore(store)) {
       renderDailyEvidencePreview(date);
-      showToast(`Added ${compressed.length} screenshot${compressed.length === 1 ? "" : "s"}.`);
+      const localCount = prepared.length - cloudCount;
+      const detail = cloudCount && !localCount ? " Synced to Storage." : cloudCount ? " Synced what could be uploaded." : " Kept local until cloud Storage is ready.";
+      showToast(`Added ${prepared.length} screenshot${prepared.length === 1 ? "" : "s"}.${detail}`);
     }
   } catch (error) {
     showToast("Could not process that screenshot.");
   }
 }
 
-function removeDailyEvidence(id) {
+async function removeDailyEvidence(id) {
   const date = currentDailyReviewDate();
   const store = dailyEvidenceStore();
-  const next = dailyEvidenceForDate(date).filter((item) => item.id !== id);
+  const existing = dailyEvidenceForDate(date);
+  const removed = existing.find((item) => item.id === id);
+  if (removed?.storagePath) {
+    try {
+      await deleteDailyEvidenceStorageItem(removed);
+    } catch (error) {
+      showToast("Removed from journal. Cloud file delete can retry after sync.");
+    }
+  }
+  const next = existing.filter((item) => item.id !== id);
   if (next.length) store[date] = next;
   else delete store[date];
   if (saveDailyEvidenceStore(store)) {
@@ -4377,19 +4562,26 @@ function removeDailyEvidence(id) {
   }
 }
 
-function openEvidencePreview(id) {
+async function openEvidencePreview(id) {
   const item = dailyEvidenceForDate(currentDailyReviewDate()).find((evidence) => evidence.id === id);
   if (!item) return;
   const modal = $("#evidencePreviewModal");
   const image = $("#evidencePreviewImage");
   const meta = $("#evidencePreviewMeta");
   if (!modal || !image) return;
-  image.src = item.dataUrl;
+  image.removeAttribute("src");
   image.alt = item.name;
-  if (meta) meta.textContent = `${item.name} · ${item.width}x${item.height} · ${compactBytes(item.size)}`;
+  if (meta) meta.textContent = `${item.name} · ${item.width}x${item.height} · ${compactBytes(item.size)} · loading`;
   if (modal.parentElement !== document.body) document.body.appendChild(modal);
   modal.classList.remove("hidden");
   document.body.classList.add("modal-open");
+  try {
+    const src = await resolveDailyEvidenceUrl(item);
+    if (src) image.src = src;
+    if (meta) meta.textContent = `${item.name} · ${item.width}x${item.height} · ${compactBytes(item.size)}${item.storagePath ? " · Cloud Storage" : " · Local"}`;
+  } catch (error) {
+    if (meta) meta.textContent = `${item.name} · could not load cloud image`;
+  }
 }
 
 function closeEvidencePreview() {
@@ -7826,13 +8018,156 @@ function updateTradePreview() {
 }
 
 function downloadFile(filename, content, type) {
-  const blob = new Blob([content], { type });
+  downloadBlob(filename, new Blob([content], { type }));
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function utf8Bytes(text = "") {
+  return new TextEncoder().encode(String(text));
+}
+
+function bytesToUtf8(bytes) {
+  return new TextDecoder().decode(bytes);
+}
+
+function backupCrc32(bytes) {
+  if (!backupCrc32.table) {
+    backupCrc32.table = Array.from({ length: 256 }, (_, index) => {
+      let value = index;
+      for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+      return value >>> 0;
+    });
+  }
+  let crc = 0xffffffff;
+  bytes.forEach((byte) => {
+    crc = backupCrc32.table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  });
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function backupDosDateTime(dateValue = new Date()) {
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  const year = Math.max(date.getFullYear(), 1980);
+  const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { dosDate, dosTime };
+}
+
+function concatBytes(parts) {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const output = new Uint8Array(total);
+  let offset = 0;
+  parts.forEach((part) => {
+    output.set(part, offset);
+    offset += part.length;
+  });
+  return output;
+}
+
+function writeUint16(view, offset, value) {
+  view.setUint16(offset, value, true);
+}
+
+function writeUint32(view, offset, value) {
+  view.setUint32(offset, value >>> 0, true);
+}
+
+function createStoredZip(files = []) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  const { dosDate, dosTime } = backupDosDateTime();
+
+  files.forEach((file) => {
+    const name = utf8Bytes(file.path.replace(/\\/g, "/"));
+    const data = file.data instanceof Uint8Array ? file.data : utf8Bytes(file.data || "");
+    const crc = backupCrc32(data);
+    const local = new Uint8Array(30 + name.length);
+    const localView = new DataView(local.buffer);
+    writeUint32(localView, 0, 0x04034b50);
+    writeUint16(localView, 4, 20);
+    writeUint16(localView, 6, 0x0800);
+    writeUint16(localView, 8, 0);
+    writeUint16(localView, 10, dosTime);
+    writeUint16(localView, 12, dosDate);
+    writeUint32(localView, 14, crc);
+    writeUint32(localView, 18, data.length);
+    writeUint32(localView, 22, data.length);
+    writeUint16(localView, 26, name.length);
+    local.set(name, 30);
+    localParts.push(local, data);
+
+    const central = new Uint8Array(46 + name.length);
+    const centralView = new DataView(central.buffer);
+    writeUint32(centralView, 0, 0x02014b50);
+    writeUint16(centralView, 4, 20);
+    writeUint16(centralView, 6, 20);
+    writeUint16(centralView, 8, 0x0800);
+    writeUint16(centralView, 10, 0);
+    writeUint16(centralView, 12, dosTime);
+    writeUint16(centralView, 14, dosDate);
+    writeUint32(centralView, 16, crc);
+    writeUint32(centralView, 20, data.length);
+    writeUint32(centralView, 24, data.length);
+    writeUint16(centralView, 28, name.length);
+    writeUint32(centralView, 42, offset);
+    central.set(name, 46);
+    centralParts.push(central);
+
+    offset += local.length + data.length;
+  });
+
+  const centralStart = offset;
+  const centralBytes = concatBytes(centralParts);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  writeUint32(endView, 0, 0x06054b50);
+  writeUint16(endView, 8, files.length);
+  writeUint16(endView, 10, files.length);
+  writeUint32(endView, 12, centralBytes.length);
+  writeUint32(endView, 16, centralStart);
+  return new Blob([concatBytes([...localParts, centralBytes, end])], { type: "application/zip" });
+}
+
+async function parseStoredZip(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  let eocd = -1;
+  for (let index = bytes.length - 22; index >= 0 && index > bytes.length - 66000; index -= 1) {
+    if (view.getUint32(index, true) === 0x06054b50) {
+      eocd = index;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("Invalid backup zip.");
+  const entries = view.getUint16(eocd + 10, true);
+  let centralOffset = view.getUint32(eocd + 16, true);
+  const files = new Map();
+  for (let index = 0; index < entries; index += 1) {
+    if (view.getUint32(centralOffset, true) !== 0x02014b50) throw new Error("Invalid backup zip.");
+    const method = view.getUint16(centralOffset + 10, true);
+    if (method !== 0) throw new Error("Unsupported compressed backup zip.");
+    const compressedSize = view.getUint32(centralOffset + 20, true);
+    const nameLength = view.getUint16(centralOffset + 28, true);
+    const extraLength = view.getUint16(centralOffset + 30, true);
+    const commentLength = view.getUint16(centralOffset + 32, true);
+    const localOffset = view.getUint32(centralOffset + 42, true);
+    const name = bytesToUtf8(bytes.slice(centralOffset + 46, centralOffset + 46 + nameLength));
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    files.set(name, bytes.slice(dataOffset, dataOffset + compressedSize));
+    centralOffset += 46 + nameLength + extraLength + commentLength;
+  }
+  return files;
 }
 
 function tradeCsvContent(list) {
@@ -7894,18 +8229,80 @@ function tradeCsvContent(list) {
   return [headers.join(","), ...rows].join("\n");
 }
 
-function exportJsonBackup() {
-  const content = JSON.stringify({
+function profileBackupPayload(evidence = dailyEvidenceStore(), backupType = "quick") {
+  return {
+    app: "FX Edge Journal",
+    backupVersion: 2,
+    backupType,
     profileName: activeAccount?.name || "FX Edge Journal",
     trades,
     strategies,
     customPairs,
     settings,
-    dailyReviewEvidence: dailyEvidenceStore(),
+    dailyReviewEvidence: evidence,
     exportedAt: new Date().toISOString()
-  }, null, 2);
+  };
+}
+
+function exportJsonBackup() {
+  const content = JSON.stringify(profileBackupPayload(dailyEvidenceStore(), "quick"), null, 2);
   downloadFile("fx-edge-journal.json", content, "application/json");
-  showToast("Backup JSON exported.");
+  showToast("Quick backup JSON exported.");
+}
+
+function backupEvidenceFileName(date, item) {
+  const ext = evidenceExtension(item.type, item.name);
+  return `evidence/${date}/${safeStorageNamePart(item.id)}.${ext}`;
+}
+
+async function fullBackupEvidenceStore() {
+  const source = normalizeDailyEvidenceStore(dailyEvidenceStore());
+  const evidenceFiles = [];
+  const portableStore = {};
+  for (const [date, items] of Object.entries(source)) {
+    portableStore[date] = [];
+    for (const item of items) {
+      const normalized = normalizeDailyEvidenceItem(item);
+      const portable = { ...normalized };
+      const filename = backupEvidenceFileName(date, normalized);
+      try {
+        const downloaded = await downloadDailyEvidenceBytes(normalized);
+        if (downloaded?.bytes?.length) {
+          evidenceFiles.push({ path: filename, data: downloaded.bytes });
+          portable.backupFile = filename;
+          portable.type = downloaded.type || portable.type;
+          portable.dataUrl = "";
+        }
+      } catch (error) {
+        if (portable.dataUrl?.startsWith("data:image/")) {
+          const blob = dataUrlToBlob(portable.dataUrl, portable.type);
+          evidenceFiles.push({ path: filename, data: await blobToBytes(blob) });
+          portable.backupFile = filename;
+          portable.dataUrl = "";
+        }
+      }
+      portableStore[date].push(portable);
+    }
+  }
+  return { portableStore: normalizeDailyEvidenceStore(portableStore), evidenceFiles };
+}
+
+async function exportFullBackup() {
+  try {
+    showToast("Preparing full backup...");
+    const { portableStore, evidenceFiles } = await fullBackupEvidenceStore();
+    const payload = profileBackupPayload(portableStore, "full");
+    const files = [
+      { path: "fx-edge-journal.json", data: utf8Bytes(JSON.stringify(payload, null, 2)) },
+      { path: "manifest.json", data: utf8Bytes(JSON.stringify({ app: "FX Edge Journal", backupVersion: 2, exportedAt: payload.exportedAt, evidenceFiles: evidenceFiles.map((file) => file.path) }, null, 2)) },
+      ...evidenceFiles
+    ];
+    const stamp = localDateKey().replace(/-/g, "");
+    downloadBlob(`fx-edge-journal-full-${stamp}.zip`, createStoredZip(files));
+    showToast(`Full backup exported with ${evidenceFiles.length} screenshot ${evidenceFiles.length === 1 ? "file" : "files"}.`);
+  } catch (error) {
+    showToast("Full backup failed. Try Quick Backup first.");
+  }
 }
 
 function exportCsv() {
@@ -7926,51 +8323,104 @@ function exportFilteredCsv() {
   showToast(`Exported ${list.length} filtered ${list.length === 1 ? "trade" : "trades"}.`);
 }
 
+async function applyImportedBackup(parsed, message = "Import complete.") {
+  if (!Array.isArray(parsed.trades)) throw new Error("Invalid import file");
+  if (Array.isArray(parsed.customPairs)) {
+    parsed.customPairs.forEach((pair) => ensurePairAvailable(pair.symbol, pair.contractSize));
+  }
+  if (parsed.settings && typeof parsed.settings === "object") {
+    const importedSettings = { ...parsed.settings };
+    const importedEvidence = importedSettings.dailyReviewEvidence || parsed.dailyReviewEvidence;
+    delete importedSettings.dailyReviewEvidence;
+    Object.assign(settings, importedSettings);
+    normalizeSettingsLists();
+    saveSettings();
+    if (importedEvidence) saveDailyEvidenceStore(mergeDailyEvidenceStores(dailyEvidenceStore(), importedEvidence));
+  }
+  if (parsed.dailyReviewEvidence && !parsed.settings?.dailyReviewEvidence) {
+    saveDailyEvidenceStore(mergeDailyEvidenceStores(dailyEvidenceStore(), parsed.dailyReviewEvidence));
+  }
+  parsed.trades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
+  trades = parsed.trades.map((trade) =>
+    withCalculatedTrade({
+      ...trade,
+      id: trade.id || crypto.randomUUID(),
+      resultR: toNumber(trade.resultR),
+      risk: toNumber(trade.risk)
+    })
+  );
+  strategies = Array.isArray(parsed.strategies) ? parsed.strategies : strategies;
+  if (activeAccount && parsed.profileName) {
+    activeAccount.name = cleanAccountName(parsed.profileName) || activeAccount.name;
+    const storedAccount = accountById(activeAccount.id);
+    if (storedAccount) storedAccount.name = activeAccount.name;
+    saveAccounts();
+  }
+  saveTrades();
+  saveStrategies();
+  renderPairOptions(defaultPair);
+  renderMarketChartOptions(marketChartPair);
+  render();
+  syncAccountUi();
+  if (isActiveCloudProfile()) queueCloudSave("import");
+  showToast(message);
+}
+
+async function restoreFullBackup(file) {
+  showToast("Restoring full backup...");
+  const files = await parseStoredZip(file);
+  const jsonBytes = files.get("fx-edge-journal.json");
+  if (!jsonBytes) throw new Error("Backup JSON not found.");
+  const parsed = JSON.parse(bytesToUtf8(jsonBytes));
+  const sourceStore = normalizeDailyEvidenceStore(parsed.dailyReviewEvidence);
+  const restoredStore = {};
+  for (const [date, items] of Object.entries(sourceStore)) {
+    restoredStore[date] = [];
+    for (const item of items) {
+      const normalized = normalizeDailyEvidenceItem(item);
+      const bytes = normalized.backupFile ? files.get(normalized.backupFile) : null;
+      if (bytes?.length) {
+        const blob = new Blob([bytes], { type: normalized.type || "image/webp" });
+        if (canUseEvidenceStorage()) {
+          try {
+            restoredStore[date].push(await uploadDailyEvidenceItem(date, { ...normalized, storagePath: "", dataUrl: "" }, blob));
+          } catch (error) {
+            restoredStore[date].push(normalizeDailyEvidenceItem({
+              ...normalized,
+              storagePath: "",
+              storageStatus: "local-restored",
+              dataUrl: bytesToDataUrl(bytes, normalized.type || "image/webp")
+            }));
+          }
+        } else {
+          restoredStore[date].push(normalizeDailyEvidenceItem({
+            ...normalized,
+            storagePath: "",
+            storageStatus: "local-restored",
+            dataUrl: bytesToDataUrl(bytes, normalized.type || "image/webp")
+          }));
+        }
+      } else {
+        restoredStore[date].push(normalized);
+      }
+    }
+  }
+  parsed.dailyReviewEvidence = restoredStore;
+  await applyImportedBackup(parsed, "Full backup restored.");
+}
+
 function importJson(file) {
+  if (!file) return;
+  const isZip = /\.zip$/i.test(file.name || "") || /zip/i.test(file.type || "");
+  if (isZip) {
+    restoreFullBackup(file).catch(() => showToast("Restore failed. Use a full backup zip from this app."));
+    return;
+  }
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const parsed = JSON.parse(reader.result);
-      if (!Array.isArray(parsed.trades)) throw new Error("Invalid import file");
-      if (Array.isArray(parsed.customPairs)) {
-        parsed.customPairs.forEach((pair) => ensurePairAvailable(pair.symbol, pair.contractSize));
-      }
-      if (parsed.settings && typeof parsed.settings === "object") {
-        const importedSettings = { ...parsed.settings };
-        const importedEvidence = importedSettings.dailyReviewEvidence || parsed.dailyReviewEvidence;
-        delete importedSettings.dailyReviewEvidence;
-        Object.assign(settings, importedSettings);
-        normalizeSettingsLists();
-        saveSettings();
-        if (importedEvidence) saveDailyEvidenceStore(mergeDailyEvidenceStores(dailyEvidenceStore(), importedEvidence));
-      }
-      if (parsed.dailyReviewEvidence && !parsed.settings?.dailyReviewEvidence) {
-        saveDailyEvidenceStore(mergeDailyEvidenceStores(dailyEvidenceStore(), parsed.dailyReviewEvidence));
-      }
-      parsed.trades.forEach((trade) => ensurePairAvailable(trade.pair, trade.contractSize));
-      trades = parsed.trades.map((trade) =>
-        withCalculatedTrade({
-          ...trade,
-          id: trade.id || crypto.randomUUID(),
-          resultR: toNumber(trade.resultR),
-          risk: toNumber(trade.risk)
-        })
-      );
-      strategies = Array.isArray(parsed.strategies) ? parsed.strategies : strategies;
-      if (activeAccount && parsed.profileName) {
-        activeAccount.name = cleanAccountName(parsed.profileName) || activeAccount.name;
-        const storedAccount = accountById(activeAccount.id);
-        if (storedAccount) storedAccount.name = activeAccount.name;
-        saveAccounts();
-      }
-      saveTrades();
-      saveStrategies();
-      renderPairOptions(defaultPair);
-      renderMarketChartOptions(marketChartPair);
-      render();
-      syncAccountUi();
-      if (isActiveCloudProfile()) queueCloudSave("import");
-      showToast("Import complete.");
+      await applyImportedBackup(parsed);
     } catch (error) {
       showToast("Import failed. Use a JSON export from this app.");
     }
@@ -8118,10 +8568,13 @@ function bindEvents() {
   const profileExportJsonButton = $("#profileExportJsonBtn");
   if (profileExportJsonButton) profileExportJsonButton.addEventListener("click", exportJsonBackup);
 
+  const profileExportFullBackupButton = $("#profileExportFullBackupBtn");
+  if (profileExportFullBackupButton) profileExportFullBackupButton.addEventListener("click", exportFullBackup);
+
   const profileImportJsonButton = $("#profileImportJsonBtn");
   if (profileImportJsonButton) {
     profileImportJsonButton.addEventListener("click", () => {
-      showToast("Choose a JSON backup file to import.");
+      showToast("Choose a JSON or full ZIP backup to restore.");
       $("#importFile")?.click();
     });
   }

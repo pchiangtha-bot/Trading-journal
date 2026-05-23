@@ -3454,6 +3454,17 @@ td {
   background: #050908;
 }
 
+.chart-evidence-loading {
+  min-height: inherit;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: center;
+}
+
 .chart-evidence-meta {
   min-width: 0;
 }
