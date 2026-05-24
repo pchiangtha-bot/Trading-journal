@@ -2435,7 +2435,6 @@ function mt5ServerDateFromRaw(value, offsetMinutes = 0) {
 }
 
 function mt5OrderSourceOffsetMinutes(order) {
-  if (mt5OrderSource(order) === "History") return 0;
   const raw = mt5OrderRaw(order);
   const explicitOffset = parseOptionalNumber(firstValue(
     raw.server_utc_offset_minutes,
@@ -2448,20 +2447,12 @@ function mt5OrderSourceOffsetMinutes(order) {
 
 function mt5OrderStoredDate(order, kind = "closed") {
   const storedValue = kind === "open" ? order?.opened_at : order?.closed_at;
-  const isHistory = mt5OrderSource(order) === "History";
-  if (isHistory && storedValue) {
-    const storedDate = new Date(storedValue);
-    if (!Number.isNaN(storedDate.getTime())) return storedDate;
-  }
-
   const rawDate = mt5ServerDateFromRaw(mt5OrderRawTime(order, kind), mt5OrderSourceOffsetMinutes(order));
   if (rawDate) return rawDate;
 
   if (storedValue) {
     const storedDate = new Date(storedValue);
-    if (!Number.isNaN(storedDate.getTime())) {
-      return isHistory ? storedDate : new Date(storedDate.getTime() - mt5OrderSourceOffsetMinutes(order) * 60000);
-    }
+    if (!Number.isNaN(storedDate.getTime())) return storedDate;
   }
   return null;
 }
@@ -2509,7 +2500,7 @@ function mt5OrderBrokerTimeKey(order, kind = "closed") {
 
 function mt5OrderDisplayDateTime(order, kind = "closed") {
   const correctedTime = formatMt5CorrectedDateTime(order, kind);
-  return correctedTime ? `${correctedTime} MT5` : formatDateTime(kind === "open" ? order.opened_at : order.closed_at);
+  return correctedTime ? `${correctedTime} Local` : formatDateTime(kind === "open" ? order.opened_at : order.closed_at);
 }
 
 function dateKeyFromTimestamp(value) {

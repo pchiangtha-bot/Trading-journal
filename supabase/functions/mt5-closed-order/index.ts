@@ -59,7 +59,6 @@ function isHistoryPayload(payload: Record<string, unknown>) {
 }
 
 function payloadServerOffsetMinutes(payload: Record<string, unknown>) {
-  if (isHistoryPayload(payload)) return 0;
   const explicitOffset = numberOrNull(firstValue(
     payload.server_utc_offset_minutes,
     payload.mt5_server_utc_offset_minutes,

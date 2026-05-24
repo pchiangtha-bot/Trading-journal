@@ -21,11 +21,16 @@ input string HistoryEndDate = "";
 input int    MaxHistoryRecords = 300;
 input bool   PollHistoryRequests = true;
 input int    HistoryRequestPollSeconds = 60;
+input int    LiveRetrySeconds = 90;
+input int    LiveRetryIntervalSeconds = 5;
 
 string sentKeys[];
+ulong pendingLiveDeals[];
+datetime pendingLiveDealAddedAt[];
 bool bridgeIsLeader = true;
 datetime lastBridgeHeartbeatAt = 0;
 datetime lastHistoryRequestPollAt = 0;
+datetime lastLiveRetryAt = 0;
 
 int OnInit()
   {
@@ -37,6 +42,12 @@ int OnInit()
     int timerSeconds = 0;
     if(PollHistoryRequests)
        timerSeconds = (int)MathMax(15, HistoryRequestPollSeconds);
+    if(LiveRetrySeconds > 0)
+      {
+       int retryTimerSeconds = (int)MathMax(1, LiveRetryIntervalSeconds);
+       if(timerSeconds == 0 || retryTimerSeconds < timerSeconds)
+          timerSeconds = retryTimerSeconds;
+      }
     if(EnableBridgeLeaderElection)
       {
        RefreshBridgeLeadership();
@@ -75,6 +86,7 @@ void OnTimer()
        lastHistoryRequestPollAt = now;
        PollHistoryRequest();
       }
+    RetryPendingLiveDeals();
   }
 
 void OnTradeTransaction(const MqlTradeTransaction& trans,
@@ -85,17 +97,97 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       return;
     if(trans.deal == 0)
        return;
-    if(EnableBridgeLeaderElection && !RefreshBridgeLeadership())
-       return;
+   int closeStatus = CloseDealCandidateStatus(trans.deal);
+   if(closeStatus < 0)
+      return;
+   if(closeStatus == 0 || !ProcessLiveDeal(trans.deal))
+      QueuePendingLiveDeal(trans.deal);
+  }
 
-    string payload = "";
+bool ProcessLiveDeal(ulong deal)
+  {
+   if(deal == 0)
+      return(false);
+   int closeStatus = CloseDealCandidateStatus(deal);
+   if(closeStatus < 0)
+      return(true);
+   if(closeStatus == 0)
+      return(false);
+   if(EnableBridgeLeaderElection && !RefreshBridgeLeadership())
+      return(false);
+
+   string payload = "";
    string dedupeKey = "";
-   if(!BuildClosedPositionPayload(trans.deal, payload, dedupeKey, "mt5-desktop", ""))
-      return;
+   if(!BuildClosedPositionPayload(deal, payload, dedupeKey, "mt5-desktop", ""))
+      return(false);
    if(AlreadySent(dedupeKey))
-      return;
+      return(true);
    if(SendPayload(payload))
+     {
       MarkSent(dedupeKey);
+      return(true);
+     }
+   return(false);
+  }
+
+int CloseDealCandidateStatus(ulong deal)
+  {
+   if(deal == 0)
+      return(-1);
+   if(!HistoryDealSelect(deal))
+      return(0);
+   long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
+   if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY || entry == DEAL_ENTRY_INOUT)
+      return(1);
+   return(-1);
+  }
+
+void QueuePendingLiveDeal(ulong deal)
+  {
+   if(LiveRetrySeconds <= 0 || deal == 0)
+      return;
+   for(int i = 0; i < ArraySize(pendingLiveDeals); i++)
+     {
+      if(pendingLiveDeals[i] == deal)
+         return;
+     }
+   int size = ArraySize(pendingLiveDeals);
+   ArrayResize(pendingLiveDeals, size + 1);
+   ArrayResize(pendingLiveDealAddedAt, size + 1);
+   pendingLiveDeals[size] = deal;
+   pendingLiveDealAddedAt[size] = TimeLocal();
+   PrintFormat("FX Edge Journal queued live deal %I64u for retry.", deal);
+  }
+
+void RetryPendingLiveDeals()
+  {
+   if(LiveRetrySeconds <= 0 || ArraySize(pendingLiveDeals) == 0)
+      return;
+
+   datetime now = TimeLocal();
+   if(lastLiveRetryAt != 0 && now - lastLiveRetryAt < (int)MathMax(1, LiveRetryIntervalSeconds))
+      return;
+   lastLiveRetryAt = now;
+
+   int kept = 0;
+   for(int i = 0; i < ArraySize(pendingLiveDeals); i++)
+     {
+      ulong deal = pendingLiveDeals[i];
+      datetime addedAt = pendingLiveDealAddedAt[i];
+      if(now - addedAt > LiveRetrySeconds)
+        {
+         PrintFormat("FX Edge Journal stopped retrying live deal %I64u after %d seconds.", deal, LiveRetrySeconds);
+         continue;
+        }
+      if(ProcessLiveDeal(deal))
+         continue;
+
+      pendingLiveDeals[kept] = deal;
+      pendingLiveDealAddedAt[kept] = addedAt;
+      kept++;
+     }
+   ArrayResize(pendingLiveDeals, kept);
+   ArrayResize(pendingLiveDealAddedAt, kept);
   }
 
 int ServerUtcOffsetMinutes()
