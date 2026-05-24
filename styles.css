@@ -598,6 +598,7 @@ button {
   display: grid;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .history-sync-controls span {
@@ -1745,6 +1746,8 @@ select,
 textarea {
   width: 100%;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--input-bg);
@@ -1762,6 +1765,31 @@ select optgroup {
 select option:checked {
   color: var(--ink);
   background: var(--teal-soft);
+}
+
+input[type="date"] {
+  display: block;
+  inline-size: 100%;
+  width: 100%;
+  min-inline-size: 0;
+  min-width: 0;
+  max-inline-size: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
+}
+
+input[type="date"]::-webkit-date-and-time-value {
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  flex: 0 0 auto;
+  margin-inline-start: 4px;
 }
 
 textarea {
@@ -1886,6 +1914,7 @@ input[type="range"] {
 
 .trade-history-filters > label {
   min-width: 0;
+  overflow: hidden;
 }
 
 .trade-history-filters input,
@@ -1933,6 +1962,11 @@ input[type="range"] {
 
 .custom-date-control.hidden {
   display: none;
+}
+
+.custom-date-control {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .analysis-scope {
@@ -3612,6 +3646,7 @@ td {
   display: grid;
   gap: 5px;
   min-width: 150px;
+  overflow: hidden;
 }
 
 .daily-review-export-control span {
