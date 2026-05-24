@@ -10,7 +10,8 @@ const storageKeys = {
   cloudSessionMode: "fx-edge-journal.cloud-session-mode.v1",
   mt5DesktopProtocolInstalled: "fx-edge-journal.mt5-desktop-protocol-installed.v1",
   dailyReviewEvidence: "fx-edge-journal.daily-review-evidence.v1",
-  scrollPosition: "fx-edge-journal.scroll-position.v1"
+  scrollPosition: "fx-edge-journal.scroll-position.v1",
+  serviceWorkerUpdateAt: "fx-edge-journal.sw-update-at.v1"
 };
 
 const defaultPair = "XAU/USD";
@@ -51,6 +52,10 @@ let marketChartPair = defaultPair;
 let marketChartInterval = "1D";
 let marketChartRenderKey = "";
 const marketChartRanges = ["1D", "5D", "1M", "3M", "12M"];
+let mt5BridgeStatusTimer = 0;
+let mt5BridgeTokenLastFetchedAt = 0;
+const mt5BridgeStatusRefreshMs = 30000;
+const mt5BridgeTokenRefreshMs = 4 * 60 * 1000;
 
 const contractSizeBySymbol = {
   "XAU/USD": 100,
@@ -1658,6 +1663,26 @@ function formatNullableDateTime(value) {
   return value ? formatDateTime(value) : "Never";
 }
 
+function minutesSinceTimestamp(value) {
+  if (!value) return Infinity;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return Infinity;
+  return Math.max(0, (Date.now() - timestamp) / 60000);
+}
+
+function formatRelativeTimestamp(value) {
+  const ageMinutes = minutesSinceTimestamp(value);
+  if (!Number.isFinite(ageMinutes)) return "Never";
+  if (ageMinutes < 1) return "Just now";
+  if (ageMinutes < 60) return `${Math.round(ageMinutes)} min ago`;
+  if (ageMinutes < 1440) {
+    const hours = Math.round(ageMinutes / 60);
+    return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  }
+  const days = Math.round(ageMinutes / 1440);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 function activeMt5BridgeTokens() {
   return mt5BridgeTokens.filter((token) => !token.revoked_at);
 }
@@ -1677,10 +1702,11 @@ function mt5BridgeHealth() {
   const activeCount = activeMt5BridgeTokens().length;
   if (!activeCount) return { label: "Token needed", tone: "warning" };
   const lastUsed = latestMt5TokenUse();
-  if (!lastUsed) return { label: "Waiting EA", tone: "warning" };
-  const ageMinutes = (Date.now() - new Date(lastUsed).getTime()) / 60000;
-  if (Number.isFinite(ageMinutes) && ageMinutes <= 15) return { label: "Live", tone: "ready" };
-  return { label: "Standby", tone: "warning" };
+  if (!lastUsed) return { label: "Waiting EA", tone: "warning", detail: "No EA heartbeat has reached Supabase yet." };
+  const ageMinutes = minutesSinceTimestamp(lastUsed);
+  if (ageMinutes <= 2) return { label: "Connected", tone: "ready", detail: "EA heartbeat is current." };
+  if (ageMinutes <= 15) return { label: "Recently active", tone: "warning", detail: "EA was online recently, but no fresh heartbeat was seen in the last 2 minutes." };
+  return { label: "Offline", tone: "error", detail: "No recent EA heartbeat. MT5 may be closed, sleeping, or disconnected." };
 }
 
 function mt5InboxReviewMode() {
@@ -1699,11 +1725,11 @@ function mt5InboxModeStatus() {
   if (mt5InboxState.kind === "loading") {
     return mt5InboxReviewMode()
       ? { label: "Loading history", tone: "loading", detail: `Checking MT5 history for ${mt5HistoryRangeLabel()}.` }
-      : { label: "Checking live", tone: "loading", detail: "Checking new closed positions from Supabase." };
+      : { label: "Checking live mode", tone: "loading", detail: "Checking new closed positions from Supabase." };
   }
   return mt5InboxReviewMode()
     ? { label: "History review", tone: "history", detail: `Showing all MT5 orders found for ${mt5HistoryRangeLabel()}, including recorded, ignored, and deleted-from-journal orders.` }
-    : { label: "Live scan", tone: "live", detail: "Showing only new closed positions. Recorded and ignored orders stay hidden until Display History is used." };
+    : { label: "Live mode", tone: "live", detail: "Showing new closed positions when a connected EA uploads them. Recorded and ignored orders stay hidden until Display History is used." };
 }
 
 function renderMt5InboxModeBadge() {
@@ -1731,15 +1757,16 @@ function renderMt5BridgeStatus() {
   const activeCount = activeMt5BridgeTokens().length;
   const health = mt5BridgeHealth();
   const mode = mt5InboxModeStatus();
+  const heartbeat = latestMt5TokenUse();
   container.innerHTML = [
-    { label: "Bridge", value: health.label, className: `health-${health.tone}` },
-    { label: "Inbox", value: mode.label, className: `mode-${mode.tone}` },
+    { label: "Bridge", value: health.label, className: `health-${health.tone}`, title: health.detail || "" },
+    { label: "Inbox", value: mode.label, className: `mode-${mode.tone}`, title: mode.detail || "" },
     { label: "Active tokens", value: `${activeCount} active`, className: "" },
     { label: "Web refresh", value: formatNullableDateTime(mt5LastFetchAt), className: "" },
-    { label: "EA heartbeat", value: formatNullableDateTime(latestMt5TokenUse()), className: "" },
+    { label: "EA heartbeat", value: formatRelativeTimestamp(heartbeat), className: "", title: formatNullableDateTime(heartbeat) },
     { label: "Last closed", value: formatNullableDateTime(mt5LastOrderAt), className: "" }
   ].map((item) => `
-    <div class="mt5-bridge-status-item ${escapeHtml(item.className)}">
+    <div class="mt5-bridge-status-item ${escapeHtml(item.className)}" title="${escapeHtml(item.title || "")}">
       <span>${escapeHtml(item.label)}</span>
       <strong>${escapeHtml(item.value)}</strong>
     </div>
@@ -1749,10 +1776,10 @@ function renderMt5BridgeStatus() {
 function bridgeTokenActivity(token) {
   if (token?.revoked_at) return { label: "Revoked", className: "revoked" };
   if (!token?.last_used_at) return { label: "Waiting EA", className: "waiting" };
-  const ageMinutes = (Date.now() - new Date(token.last_used_at).getTime()) / 60000;
-  if (Number.isFinite(ageMinutes) && ageMinutes <= 15) return { label: "Live", className: "live" };
-  if (Number.isFinite(ageMinutes) && ageMinutes <= 360) return { label: "Standby", className: "standby" };
-  return { label: "Idle", className: "idle" };
+  const ageMinutes = minutesSinceTimestamp(token.last_used_at);
+  if (ageMinutes <= 2) return { label: "Connected", className: "live" };
+  if (ageMinutes <= 15) return { label: "Recently active", className: "standby" };
+  return { label: "Offline", className: "idle" };
 }
 
 function renderBridgeTokenManager() {
@@ -1798,6 +1825,7 @@ async function fetchMt5BridgeTokens(options = {}) {
   const { silent = false } = options;
   if (!supabaseClient || !cloudUser) {
     mt5BridgeTokens = [];
+    mt5BridgeTokenLastFetchedAt = 0;
     renderBridgeTokenManager();
     return;
   }
@@ -1812,11 +1840,42 @@ async function fetchMt5BridgeTokens(options = {}) {
     );
     if (error) throw error;
     mt5BridgeTokens = Array.isArray(data) ? data : [];
+    mt5BridgeTokenLastFetchedAt = Date.now();
     renderBridgeTokenManager();
   } catch (error) {
     renderBridgeTokenManager();
     if (!silent) showToast(friendlyCloudError(error));
   }
+}
+
+function shouldRefreshMt5BridgeTokens() {
+  return Boolean(
+    supabaseClient &&
+    cloudUser &&
+    (!mt5BridgeTokenLastFetchedAt || Date.now() - mt5BridgeTokenLastFetchedAt >= mt5BridgeTokenRefreshMs)
+  );
+}
+
+async function refreshMt5BridgeTokensIfStale() {
+  if (!shouldRefreshMt5BridgeTokens()) return;
+  await fetchMt5BridgeTokens({ silent: true });
+}
+
+function tickMt5BridgeStatus() {
+  renderMt5BridgeStatus();
+  if (isProfileManagementOpen()) renderBridgeTokenManager();
+  refreshMt5BridgeTokensIfStale().catch(() => {
+    renderMt5BridgeStatus();
+  });
+}
+
+function initMt5BridgeStatusLoop() {
+  window.clearInterval(mt5BridgeStatusTimer);
+  mt5BridgeStatusTimer = window.setInterval(tickMt5BridgeStatus, mt5BridgeStatusRefreshMs);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    window.setTimeout(tickMt5BridgeStatus, 180);
+  });
 }
 
 async function revokeMt5BridgeToken(tokenId) {
@@ -9863,6 +9922,7 @@ function bootstrap() {
   renderDstWidget();
   setInterval(renderDstWidget, 60000);
   initAppScrollMemory();
+  initMt5BridgeStatusLoop();
   if (!activeAccount) {
     showAuthOverlay("cloud", true);
   }
@@ -9875,7 +9935,10 @@ bootstrap();
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.register("./sw.js").then((registration) => {
-    registration.update();
+    const lastUpdateCheck = toNumber(safeLocalGet(storageKeys.serviceWorkerUpdateAt), 0);
+    if (Date.now() - lastUpdateCheck < 6 * 60 * 60 * 1000) return;
+    safeLocalSet(storageKeys.serviceWorkerUpdateAt, String(Date.now()));
+    registration.update().catch(() => {});
   }).catch(() => {
     // Some local file and non-secure hosts do not allow service workers.
   });
