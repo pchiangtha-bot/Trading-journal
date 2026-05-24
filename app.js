@@ -3562,6 +3562,26 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function moneyNumber(value, fallback = 0) {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  const cleaned = String(value).replace(/,/g, "").replace(/[^0-9.-]/g, "");
+  if (!cleaned || cleaned === "-" || cleaned === "." || cleaned === "-.") return fallback;
+  const number = Number(cleaned);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function hasMoneyValue(value) {
+  if (value === null || value === undefined || value === "") return false;
+  const cleaned = String(value).replace(/,/g, "").replace(/[^0-9.-]/g, "");
+  return cleaned !== "" && cleaned !== "-" && cleaned !== "." && cleaned !== "-." && Number.isFinite(Number(cleaned));
+}
+
+function moneyInputValue(value) {
+  if (!hasMoneyValue(value)) return "";
+  return roundNumber(moneyNumber(value), 2).toFixed(2);
+}
+
 function formatR(value) {
   const safe = Number.isFinite(value) ? value : 0;
   return `${safe >= 0 ? "" : "-"}${numberFormatter.format(Math.abs(safe))}R`;
@@ -4196,9 +4216,12 @@ function normalizeDailyReview(review = {}) {
   const fields = [
     "startingBalance",
     "endingBalance",
+    "deposit",
+    "withdrawal",
     "tradesTaken",
     "winLoss",
     "netPl",
+    "netCashFlow",
     "screenshots",
     "followedPlan",
     "reversedEmotionally",
@@ -4215,6 +4238,11 @@ function normalizeDailyReview(review = {}) {
   fields.forEach((field) => {
     normalized[field] = String(review[field] ?? "").trim();
   });
+  normalized.deposit = moneyInputValue(normalized.deposit || 0) || "0.00";
+  normalized.withdrawal = moneyInputValue(normalized.withdrawal || 0) || "0.00";
+  normalized.netCashFlow = currencyFormatter.format(dailyReviewCashFlow(normalized));
+  if (hasMoneyValue(normalized.startingBalance)) normalized.startingBalance = moneyInputValue(normalized.startingBalance);
+  if (hasMoneyValue(normalized.endingBalance)) normalized.endingBalance = moneyInputValue(normalized.endingBalance);
   normalized.followedPlan = normalized.followedPlan || "Yes";
   normalized.reversedEmotionally = normalized.reversedEmotionally || "No";
   normalized.closedEarly = normalized.closedEarly || "No";
@@ -5094,7 +5122,72 @@ function equitySeriesForPeriod(list, period) {
     });
 }
 
+function dailyReviewsForAnalyticsRange() {
+  const { start, end } = analyticsRangeBounds();
+  return normalizeDailyReviews(settings.dailyReviews)
+    .filter((review) => {
+      const date = String(review.date || "").slice(0, 10);
+      if (!date || !hasMoneyValue(review.endingBalance)) return false;
+      if (start && date < start) return false;
+      if (end && date > end) return false;
+      return true;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function dailyReviewBalanceSeriesForPeriod(period) {
+  const dates = financialEventDatesForAnalyticsRange();
+  if (!dates.length) return [];
+  const buckets = new Map();
+  dates.forEach((date) => {
+    const key = periodKey(date, period);
+    if (!key) return;
+    const stats = tradeStatsForDate(date);
+    const review = dailyReviewByDate(date);
+    const cashFlow = dailyReviewCashFlowForDate(date);
+    const existing = buckets.get(key) || {
+      key,
+      periodPl: 0,
+      cashFlow: 0,
+      count: 0,
+      reviewCount: 0,
+      firstDate: date,
+      startingBalance: accountBalanceBeforeDate(date),
+      lastDate: "",
+      value: accountBalanceBeforeDate(date)
+    };
+    existing.periodPl += stats.netPl;
+    existing.cashFlow += cashFlow;
+    existing.count += stats.count;
+    existing.reviewCount += review ? 1 : 0;
+    if (date < existing.firstDate) {
+      existing.firstDate = date;
+      existing.startingBalance = accountBalanceBeforeDate(date);
+    }
+    if (!existing.lastDate || date >= existing.lastDate) {
+      existing.lastDate = date;
+      existing.value = accountBalanceAfterDate(date, settings.dailyReviews, review);
+    }
+    buckets.set(key, existing);
+  });
+  return [...buckets.values()]
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map((bucket) => ({
+      ...bucket,
+      periodPl: roundNumber(bucket.periodPl, 2),
+      cashFlow: roundNumber(bucket.cashFlow, 2),
+      label: periodLabel(bucket.key, period)
+    }));
+}
+
+function balanceSeriesStartingValue(series = []) {
+  const firstWithStart = series.find((point) => hasMoneyValue(point.startingBalance));
+  return firstWithStart ? moneyNumber(firstWithStart.startingBalance) : Math.max(toNumber(settings.startingBalance, 1000), 0);
+}
+
 function balanceSeriesForPeriod(list, period) {
+  const dailyReviewSeries = dailyReviewBalanceSeriesForPeriod(period);
+  if (dailyReviewSeries.length) return dailyReviewSeries;
   const buckets = new Map();
   [...list]
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -5351,9 +5444,39 @@ function tradesPerWeek(list) {
   return list.length / Math.max(days / 7, 1);
 }
 
+function dailyReviewCashStatsForAnalytics() {
+  const { start, end } = analyticsRangeBounds();
+  const reviews = normalizeDailyReviews(settings.dailyReviews)
+    .filter((review) => {
+      const date = String(review.date || "").slice(0, 10);
+      if (!date) return false;
+      if (start && date < start) return false;
+      if (end && date > end) return false;
+      return true;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const eventDates = financialEventDatesForAnalyticsRange();
+  const firstEventDate = eventDates[0] || reviews[0]?.date || start || "";
+  const latestEventDate = eventDates[eventDates.length - 1] || reviews[reviews.length - 1]?.date || end || "";
+  const deposits = sum(reviews, dailyReviewDeposit);
+  const withdrawals = sum(reviews, dailyReviewWithdrawal);
+  const tradingNetPl = sum(getAnalyticsTrades(), tradePl);
+  return {
+    count: reviews.length,
+    balanceReviewCount: eventDates.length,
+    deposits,
+    withdrawals,
+    netCashFlow: deposits - withdrawals,
+    tradingNetPl,
+    startingBalance: firstEventDate ? accountBalanceBeforeDate(firstEventDate) : null,
+    endingBalance: latestEventDate ? accountBalanceAfterDate(latestEventDate) : null
+  };
+}
+
 function buildReportStats(list) {
   const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
-  const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
+  const cashStats = dailyReviewCashStatsForAnalytics();
+  const startingBalance = Math.max(cashStats.startingBalance ?? toNumber(settings.startingBalance, 1000), 0);
   const values = sorted.map(tradePl);
   const priceValues = sorted.map(tradePricePl);
   const rValues = sorted.map((trade) => toNumber(trade.resultR));
@@ -5363,7 +5486,7 @@ function buildReportStats(list) {
   const fees = sum(sorted, tradeFees);
   const commissions = sum(sorted, (trade) => toNumber(trade.commission));
   const swaps = sum(sorted, (trade) => toNumber(trade.swap));
-  const balance = startingBalance + netPl;
+  const balance = cashStats.endingBalance ?? startingBalance + netPl;
   const maxDrawdownCash = cashDrawdown(sorted, startingBalance);
   const bestTrade = sorted.reduce((best, trade) => tradePl(trade) > tradePl(best || trade) ? trade : best, sorted[0] || null);
   const worstTrade = sorted.reduce((worst, trade) => tradePl(trade) < tradePl(worst || trade) ? trade : worst, sorted[0] || null);
@@ -5378,7 +5501,13 @@ function buildReportStats(list) {
     fees,
     commissions,
     swaps,
-    gain: startingBalance ? (netPl / startingBalance) * 100 : 0,
+    deposits: cashStats.deposits,
+    withdrawals: cashStats.withdrawals,
+    netCashFlow: cashStats.netCashFlow,
+    reviewTradingNetPl: cashStats.tradingNetPl,
+    reviewCount: cashStats.count,
+    balanceReviewCount: cashStats.balanceReviewCount,
+    gain: startingBalance ? ((balance - startingBalance - cashStats.netCashFlow) / startingBalance) * 100 : 0,
     profitFactorCash: grossLossCash ? grossProfitCash / grossLossCash : grossProfitCash ? Infinity : 0,
     sharpeRatio: standardDeviation(rValues) ? (sum(rValues, (value) => value) / rValues.length / standardDeviation(rValues)) * Math.sqrt(rValues.length) : 0,
     recoveryFactor: maxDrawdownCash ? netPl / Math.abs(maxDrawdownCash) : netPl > 0 ? Infinity : 0,
@@ -5679,6 +5808,141 @@ function dailyReviewByDate(date) {
   return settings.dailyReviews.find((review) => review.date === key) || null;
 }
 
+function dailyReviewFromList(date, list = settings.dailyReviews) {
+  const key = String(date || "").slice(0, 10);
+  return normalizeDailyReviews(list).find((review) => review.date === key) || null;
+}
+
+function dailyReviewDeposit(review = {}) {
+  return Math.max(moneyNumber(review.deposit, 0), 0);
+}
+
+function dailyReviewWithdrawal(review = {}) {
+  return Math.max(moneyNumber(review.withdrawal, 0), 0);
+}
+
+function dailyReviewCashFlow(review = {}) {
+  return roundNumber(dailyReviewDeposit(review) - dailyReviewWithdrawal(review), 2);
+}
+
+function dailyReviewCashFlowForDate(date, list = settings.dailyReviews, overrideReview = null) {
+  const key = String(date || "").slice(0, 10);
+  if (!key) return 0;
+  const overrideKey = String(overrideReview?.date || "").slice(0, 10);
+  const review = overrideKey === key ? overrideReview : dailyReviewFromList(key, list);
+  return review ? dailyReviewCashFlow(review) : 0;
+}
+
+function tradeStatsForDate(date) {
+  const dayTrades = tradesForDate(date);
+  const wins = dayTrades.filter((trade) => toNumber(trade.resultR) > 0).length;
+  const losses = dayTrades.filter((trade) => toNumber(trade.resultR) < 0).length;
+  const flat = Math.max(dayTrades.length - wins - losses, 0);
+  const netPl = roundNumber(sum(dayTrades, tradePl), 2);
+  return { dayTrades, count: dayTrades.length, wins, losses, flat, netPl };
+}
+
+function dailyReviewWinLossLabel(stats = {}) {
+  const wins = Math.max(toNumber(stats.wins, 0), 0);
+  const losses = Math.max(toNumber(stats.losses, 0), 0);
+  const flat = Math.max(toNumber(stats.flat, 0), 0);
+  return `${wins}W / ${losses}L${flat ? ` / ${flat}BE` : ""}`;
+}
+
+function dailyReviewTradingNetPl(review = {}, fallback = 0) {
+  const date = String(review.date || "").slice(0, 10);
+  if (date) return tradeStatsForDate(date).netPl;
+  return roundNumber(moneyNumber(review.netPl, fallback), 2);
+}
+
+function accountBalanceBeforeDate(date = localDateKey(), list = settings.dailyReviews) {
+  const selected = String(date || localDateKey()).slice(0, 10);
+  const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
+  if (!selected) return roundNumber(startingBalance, 2);
+  const tradeNet = sum(trades, (trade) => {
+    const tradeDate = String(trade.date || "").slice(0, 10);
+    return tradeDate && tradeDate < selected ? tradePl(trade) : 0;
+  });
+  const cashFlow = sum(normalizeDailyReviews(list), (review) => {
+    const reviewDate = String(review.date || "").slice(0, 10);
+    return reviewDate && reviewDate < selected ? dailyReviewCashFlow(review) : 0;
+  });
+  return roundNumber(startingBalance + tradeNet + cashFlow, 2);
+}
+
+function accountBalanceAfterDate(date = localDateKey(), list = settings.dailyReviews, overrideReview = null) {
+  const key = String(date || localDateKey()).slice(0, 10);
+  return roundNumber(
+    accountBalanceBeforeDate(key, list) + tradeStatsForDate(key).netPl + dailyReviewCashFlowForDate(key, list, overrideReview),
+    2
+  );
+}
+
+function previousDailyReviewWithEndingBalance(date = localDateKey()) {
+  const selected = String(date || localDateKey()).slice(0, 10);
+  return normalizeDailyReviews(settings.dailyReviews)
+    .find((review) => review.date < selected) || null;
+}
+
+function dailyReviewStartingBalanceForDate(date = localDateKey()) {
+  return accountBalanceBeforeDate(date);
+}
+
+function dailyReviewCalculatedFields(date = localDateKey(), input = {}, list = settings.dailyReviews) {
+  const key = String(date || localDateKey()).slice(0, 10) || localDateKey();
+  const baseInput = { ...input, date: key };
+  const stats = tradeStatsForDate(key);
+  const deposit = dailyReviewDeposit(baseInput);
+  const withdrawal = dailyReviewWithdrawal(baseInput);
+  const cashFlow = roundNumber(deposit - withdrawal, 2);
+  const startingBalance = accountBalanceBeforeDate(key, list);
+  const endingBalance = roundNumber(startingBalance + stats.netPl + cashFlow, 2);
+  return {
+    startingBalance: moneyInputValue(startingBalance),
+    endingBalance: moneyInputValue(endingBalance),
+    deposit: moneyInputValue(deposit) || "0.00",
+    withdrawal: moneyInputValue(withdrawal) || "0.00",
+    tradesTaken: String(stats.count),
+    winLoss: dailyReviewWinLossLabel(stats),
+    netPl: currencyFormatter.format(stats.netPl),
+    netCashFlow: currencyFormatter.format(cashFlow)
+  };
+}
+
+function applyDailyReviewCalculatedFields(review = {}, list = settings.dailyReviews) {
+  const date = String(review.date || localDateKey()).slice(0, 10) || localDateKey();
+  return normalizeDailyReview({
+    ...review,
+    date,
+    ...dailyReviewCalculatedFields(date, review, list)
+  });
+}
+
+function recalculateDailyReviews(list = settings.dailyReviews) {
+  const normalized = normalizeDailyReviews(list);
+  return normalized.map((review) => applyDailyReviewCalculatedFields(review, normalized));
+}
+
+function financialEventDatesForAnalyticsRange(list = settings.dailyReviews) {
+  const { start, end } = analyticsRangeBounds();
+  const dates = new Set();
+  trades.forEach((trade) => {
+    const date = String(trade.date || "").slice(0, 10);
+    if (!date) return;
+    if (start && date < start) return;
+    if (end && date > end) return;
+    dates.add(date);
+  });
+  normalizeDailyReviews(list).forEach((review) => {
+    const date = String(review.date || "").slice(0, 10);
+    if (!date) return;
+    if (start && date < start) return;
+    if (end && date > end) return;
+    if (dailyReviewCashFlow(review) || hasMoneyValue(review.endingBalance)) dates.add(date);
+  });
+  return [...dates].sort((a, b) => a.localeCompare(b));
+}
+
 function ruleForTomorrowFromSignals(signals = {}, topMistake = null) {
   if (signals.twoLosses) return "After 2 losses, stop trading and only review screenshots.";
   if (signals.dailyTradeLimit) return "Maximum 2 trades unless the next setup is A+ and fully checked.";
@@ -5695,12 +5959,9 @@ function ruleForTomorrowFromSignals(signals = {}, topMistake = null) {
 }
 
 function dailyReviewDefaults(date = localDateKey()) {
-  const dayTrades = tradesForDate(date);
-  const wins = dayTrades.filter((trade) => toNumber(trade.resultR) > 0).length;
-  const losses = dayTrades.filter((trade) => toNumber(trade.resultR) < 0).length;
-  const flat = Math.max(dayTrades.length - wins - losses, 0);
-  const netPl = roundNumber(sum(dayTrades, (trade) => toNumber(trade.actualPl)), 2);
-  const startingBalance = toNumber(settings.startingBalance, 1000);
+  const stats = tradeStatsForDate(date);
+  const dayTrades = stats.dayTrades;
+  const calculated = dailyReviewCalculatedFields(date, { deposit: "0.00", withdrawal: "0.00" });
   const mistakes = dayTrades.flatMap((trade) => tradeTagsForReview(trade, "mistake"));
   const positives = dayTrades.flatMap((trade) => tradeTagsForReview(trade, "positive"));
   const topMistake = topFrequencyValue(mistakes);
@@ -5720,11 +5981,7 @@ function dailyReviewDefaults(date = localDateKey()) {
 
   return normalizeDailyReview({
     date,
-    startingBalance: startingBalance ? String(startingBalance) : "",
-    endingBalance: dayTrades.length ? String(roundNumber(startingBalance + netPl, 2)) : "",
-    tradesTaken: dayTrades.length ? String(dayTrades.length) : "",
-    winLoss: dayTrades.length ? `${wins}W / ${losses}L${flat ? ` / ${flat}BE` : ""}` : "",
-    netPl: dayTrades.length ? currencyFormatter.format(netPl) : "",
+    ...calculated,
     followedPlan: majorRuleIssue ? "No" : signalList.length ? "Partially" : "Yes",
     reversedEmotionally: hasReviewTag(mistakes, ["Instant Reversal", "Revenge Trade"]) ? "Yes" : "No",
     closedEarly: hasReviewTag(mistakes, ["Early Exit"]) ? "Yes" : "No",
@@ -5738,13 +5995,42 @@ function dailyReviewDefaults(date = localDateKey()) {
   });
 }
 
-function fillDailyReviewForm(date = localDateKey()) {
+function dailyReviewTradeNetFromJournal(date = localDateKey()) {
+  return tradeStatsForDate(date).netPl;
+}
+
+function updateDailyReviewBalancePreview() {
   const form = $("#dailyReviewForm");
   if (!form) return;
-  const review = dailyReviewByDate(date) || dailyReviewDefaults(date);
-  Object.entries(review).forEach(([key, value]) => {
-    if (form.elements[key]) form.elements[key].value = value;
+  const review = {
+    date: form.elements.date?.value || localDateKey(),
+    deposit: form.elements.deposit?.value,
+    withdrawal: form.elements.withdrawal?.value
+  };
+  const calculated = dailyReviewCalculatedFields(review.date, review);
+  ["startingBalance", "endingBalance", "tradesTaken", "winLoss", "netPl"].forEach((name) => {
+    if (form.elements[name]) form.elements[name].value = calculated[name] || "";
   });
+  const cashFlowSummary = $("#dailyCashFlowSummary");
+  if (cashFlowSummary) cashFlowSummary.textContent = calculated.netCashFlow;
+  const balanceNote = $("#dailyBalanceNote");
+  if (balanceNote) {
+    balanceNote.textContent = `Ending = starting balance + trading Net P/L + deposits - withdrawals. Source: ${calculated.tradesTaken} trade${calculated.tradesTaken === "1" ? "" : "s"} on ${formatDate(review.date)}.`;
+  }
+}
+
+function fillDailyReviewForm(date = localDateKey(), options = {}) {
+  const form = $("#dailyReviewForm");
+  if (!form) return;
+  const savedReview = dailyReviewByDate(date);
+  const review = savedReview ? applyDailyReviewCalculatedFields(savedReview) : dailyReviewDefaults(date);
+  Object.entries(review).forEach(([key, value]) => {
+    if (!form.elements[key]) return;
+    const isEditableCashField = key === "deposit" || key === "withdrawal";
+    if (options.preserveActive && isEditableCashField && document.activeElement === form.elements[key]) return;
+    form.elements[key].value = value;
+  });
+  updateDailyReviewBalancePreview();
   renderDailyEvidencePreview(review.date);
 }
 
@@ -5759,20 +6045,24 @@ function fillDailyReviewFromJournal(date = localDateKey()) {
   Object.entries(review).forEach(([key, value]) => {
     if (form.elements[key]) form.elements[key].value = value;
   });
+  updateDailyReviewBalancePreview();
   renderDailyEvidencePreview(review.date);
   renderChecklistDashboard();
 }
 
 function readDailyReviewForm() {
   const form = $("#dailyReviewForm");
+  updateDailyReviewBalancePreview();
   const data = new FormData(form);
-  return normalizeDailyReview({
+  const reviewInput = {
     date: data.get("date") || localDateKey(),
-    startingBalance: data.get("startingBalance"),
-    endingBalance: data.get("endingBalance"),
-    tradesTaken: data.get("tradesTaken"),
-    winLoss: data.get("winLoss"),
-    netPl: data.get("netPl"),
+    deposit: data.get("deposit"),
+    withdrawal: data.get("withdrawal")
+  };
+  return applyDailyReviewCalculatedFields({
+    date: reviewInput.date,
+    deposit: reviewInput.deposit,
+    withdrawal: reviewInput.withdrawal,
     screenshots: data.get("screenshots"),
     followedPlan: data.get("followedPlan"),
     reversedEmotionally: data.get("reversedEmotionally"),
@@ -5791,7 +6081,7 @@ function readDailyReviewForm() {
 function renderDailyReviewHistory() {
   const container = $("#dailyReviewHistory");
   if (!container) return;
-  const reviews = normalizeDailyReviews(settings.dailyReviews).slice(0, 10);
+  const reviews = recalculateDailyReviews(settings.dailyReviews).slice(0, 10);
   if (!reviews.length) {
     container.innerHTML = '<p class="rule-copy">No daily reviews saved yet.</p>';
     return;
@@ -5799,6 +6089,10 @@ function renderDailyReviewHistory() {
   container.innerHTML = reviews
     .map((review) => {
       const evidenceCount = dailyEvidenceForDate(review.date).length;
+      const cashFlow = dailyReviewCashFlow(review);
+      const cashFlowTag = cashFlow
+        ? `<span>Cash flow ${escapeHtml(currencyFormatter.format(cashFlow))}</span>`
+        : "";
       return `
       <article class="daily-review-item">
         <div>
@@ -5811,6 +6105,7 @@ function renderDailyReviewHistory() {
           <div class="daily-review-tags">
             <span>${escapeHtml(review.followedPlan || "Plan not scored")}</span>
             <span>${escapeHtml(review.biggestEmotion || "Emotion not noted")}</span>
+            ${cashFlowTag}
             ${evidenceCount ? `<span>${escapeHtml(`${evidenceCount} screenshot${evidenceCount === 1 ? "" : "s"}`)}</span>` : ""}
           </div>
         </div>
@@ -5840,6 +6135,7 @@ function deleteDailyReview(date) {
   const before = settings.dailyReviews.length;
   settings.dailyReviews = normalizeDailyReviews(settings.dailyReviews).filter((review) => review.date !== key);
   if (settings.dailyReviews.length === before) return;
+  settings.dailyReviews = recalculateDailyReviews(settings.dailyReviews);
   saveSettings();
   if (currentDailyReviewDate() === key) fillDailyReviewForm(key);
   renderDailyReviewHistory();
@@ -5888,7 +6184,7 @@ function renderChecklistRules() {
     input.closest(".check-card")?.classList.toggle("auto-triggered", autoTriggered);
   });
   renderAutoNoTradeSignals(autoSignals);
-  fillDailyReviewForm($("#dailyReviewDate")?.value || localDateKey());
+  fillDailyReviewForm($("#dailyReviewDate")?.value || localDateKey(), { preserveActive: true });
   renderDailyReviewHistory();
   renderChecklistDashboard();
 }
@@ -5909,7 +6205,7 @@ function saveDailyReviewFromForm() {
   const index = settings.dailyReviews.findIndex((item) => item.date === review.date);
   if (index >= 0) settings.dailyReviews[index] = review;
   else settings.dailyReviews.push(review);
-  settings.dailyReviews = normalizeDailyReviews(settings.dailyReviews);
+  settings.dailyReviews = recalculateDailyReviews(settings.dailyReviews);
   saveSettings();
   renderDailyEvidencePreview(review.date);
   renderDailyReviewHistory();
@@ -5918,7 +6214,7 @@ function saveDailyReviewFromForm() {
 }
 
 function exportDailyReviewsCsv() {
-  const reviews = normalizeDailyReviews(settings.dailyReviews);
+  const reviews = recalculateDailyReviews(settings.dailyReviews);
   if (!reviews.length) {
     showToast("Save a daily review before exporting.");
     return;
@@ -5933,6 +6229,9 @@ function exportDailyReviewsCsv() {
     "date",
     "startingBalance",
     "endingBalance",
+    "deposit",
+    "withdrawal",
+    "netCashFlow",
     "tradesTaken",
     "winLoss",
     "netPl",
@@ -6135,7 +6434,7 @@ function renderAnalytics(stats, sourceTrades = getAnalyticsTrades()) {
   const chartTitle = $("#chart-title");
   if (chartTitle) chartTitle.textContent = equityChartMetric === "balance" ? "Equity Balance Curve" : "Cumulative R Curve";
   if (equityChartMetric === "balance") {
-    const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
+    const startingBalance = balanceSeriesStartingValue(equitySeries);
     const endingBalance = equitySeries[equitySeries.length - 1]?.value ?? startingBalance;
     $("#expectancyPill").textContent = `${periodLabelText} view, ${currencyFormatter.format(endingBalance)} balance`;
   } else {
@@ -6791,7 +7090,9 @@ function drawEquityChart(equity, period = "day", metric = "r") {
   const padding = compact
     ? { top: 42, right: 52, bottom: 72, left: 44 }
     : { top: 38, right: 74, bottom: 62, left: 60 };
-  const startingBalance = Math.max(toNumber(settings.startingBalance, 1000), 0);
+  const startingBalance = metric === "balance"
+    ? balanceSeriesStartingValue(equity)
+    : Math.max(toNumber(settings.startingBalance, 1000), 0);
   const chartData = [
     { label: "Start", value: metric === "balance" ? startingBalance : 0, periodR: 0, periodPl: 0, count: 0, key: "" },
     ...equity.map((point) => ({
@@ -7658,7 +7959,11 @@ function renderReportAnalysis(sourceTrades = getAnalyticsTrades()) {
   ]);
 
   renderMetricRows("#reportProfitLoss", [
-    { label: "Net P/L", value: currencyFormatter.format(report.netPl) },
+    { label: "Trade Net P/L", value: currencyFormatter.format(report.netPl) },
+    { label: "Daily Review P/L", value: report.reviewCount ? currencyFormatter.format(report.reviewTradingNetPl) : "No daily review" },
+    { label: "Deposits", value: currencyFormatter.format(report.deposits) },
+    { label: "Withdrawals", value: currencyFormatter.format(report.withdrawals) },
+    { label: "Net Cash Flow", value: currencyFormatter.format(report.netCashFlow) },
     { label: "Gross Profit", value: currencyFormatter.format(report.grossProfitCash) },
     { label: "Gross Loss", value: currencyFormatter.format(-report.grossLossCash) },
     { label: "Average P/L", value: currencyFormatter.format(report.averagePl) },
@@ -9440,6 +9745,15 @@ function bindEvents() {
       fillDailyReviewForm(selectedDate);
       renderChecklistDashboard();
       showToast(selectedDailyReviewLoadMessage(selectedDate));
+    });
+  }
+
+  if (dailyReviewForm) {
+    ["deposit", "withdrawal"].forEach((name) => {
+      const field = dailyReviewForm.elements[name];
+      if (!field) return;
+      field.addEventListener("input", updateDailyReviewBalancePreview);
+      field.addEventListener("change", updateDailyReviewBalancePreview);
     });
   }
 

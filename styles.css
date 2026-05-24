@@ -3466,6 +3466,45 @@ td {
   grid-column: 1 / -1;
 }
 
+.daily-cash-flow-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--teal-soft) 52%, var(--surface));
+}
+
+.daily-cash-flow-note span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+}
+
+.daily-cash-flow-note strong {
+  color: var(--teal);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.daily-balance-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  min-height: 40px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--teal) 36%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--teal-soft) 34%, var(--surface));
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
 .daily-behavior-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(140px, 1fr));

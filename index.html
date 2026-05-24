@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg">
-  <link rel="stylesheet" href="styles.css?v=134">
+  <link rel="stylesheet" href="styles.css?v=136">
 </head>
 <body>
   <div class="app-shell">
@@ -1333,11 +1333,18 @@
             <form id="dailyReviewForm" class="daily-template-grid">
               <div class="daily-review-section daily-review-summary">
                 <label><span>Date</span><input type="date" name="date" id="dailyReviewDate"></label>
-                <label><span>Starting balance</span><input type="number" name="startingBalance" min="0" step="0.01" placeholder="1000.00"></label>
-                <label><span>Ending balance</span><input type="number" name="endingBalance" min="0" step="0.01" placeholder="1040.00"></label>
-                <label><span>Trades taken</span><input type="number" name="tradesTaken" min="0" step="1" placeholder="2"></label>
-                <label><span>Win / Loss</span><input name="winLoss" placeholder="1W / 1L"></label>
-                <label><span>Net P/L</span><input name="netPl" placeholder="$0.00"></label>
+                <label><span>Starting balance</span><input type="number" name="startingBalance" min="0" step="0.01" placeholder="1000.00" readonly></label>
+                <label><span>Ending balance</span><input type="number" name="endingBalance" min="0" step="0.01" placeholder="1040.00" readonly></label>
+                <label><span>Deposit</span><input type="number" name="deposit" min="0" step="0.01" placeholder="0.00"></label>
+                <label><span>Withdrawal</span><input type="number" name="withdrawal" min="0" step="0.01" placeholder="0.00"></label>
+                <label><span>Trades taken</span><input type="number" name="tradesTaken" min="0" step="1" placeholder="2" readonly></label>
+                <label><span>Win / Loss</span><input name="winLoss" placeholder="1W / 1L" readonly></label>
+                <label><span>Trading Net P/L</span><input name="netPl" placeholder="$0.00" readonly></label>
+                <div class="daily-cash-flow-note">
+                  <span>Net cash flow</span>
+                  <strong id="dailyCashFlowSummary">$0.00</strong>
+                </div>
+                <p class="daily-balance-note" id="dailyBalanceNote">Balances are calculated from saved trades plus deposits and withdrawals.</p>
                 <label class="daily-note-field"><span>Chart link / note</span><input name="screenshots" placeholder="TradingView link or chart note"></label>
               </div>
               <div class="daily-review-section chart-evidence-field">
@@ -1787,6 +1794,6 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=134"></script>
+  <script src="app.js?v=136"></script>
 </body>
 </html>
