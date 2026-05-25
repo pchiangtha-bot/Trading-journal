@@ -2122,7 +2122,9 @@ input[type="range"] {
   --trade-history-row: 63px;
   max-height: calc(var(--trade-history-head) + (var(--trade-history-row) * 14));
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
   border: 0;
   border-radius: 0;
 }
